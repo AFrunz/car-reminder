@@ -103,6 +103,12 @@ const ru = {
     wheels: 'Шины и колёса',
   },
 
+  /** Гараж целиком пуст — вместо вкладки «ТО» показывается приглашение завести машину. */
+  garage: {
+    empty: 'Машин пока нет',
+    emptyHint: 'Добавьте автомобиль — с него и начнётся история обслуживания.',
+  },
+
   /**
    * Вкладка «ТО»: подсказки частых услуг (`COMMON_SERVICES`) и карточки вверху экрана.
    * Числа приходят уже отформатированными (`{{km}}`, `{{mileage}}`), а `count` нужен
@@ -122,7 +128,12 @@ const ru = {
     updateMileage: 'Обновить пробег',
     mileageHint: 'Меньше, чем в истории, поставить не получится',
     next: 'Следующее ТО',
+    noData: 'ТО ещё не было',
     inKm: 'через {{km}} км',
+    inMonths_one: 'через {{months}} месяц',
+    inMonths_few: 'через {{months}} месяца',
+    inMonths_many: 'через {{months}} месяцев',
+    inMonths_other: 'через {{months}} месяца',
     orMonths_one: 'или {{months}} месяц',
     orMonths_few: 'или {{months}} месяца',
     orMonths_many: 'или {{months}} месяцев',
@@ -157,6 +168,7 @@ const ru = {
     remainingMonths: '{{months}} мес',
     overdue: 'просрочено',
     overdueKm: '{{km}} км · просрочено',
+    overdueMonths: '{{months}} мес · просрочено',
     noData: 'нет данных',
     addCustom: 'Своя запчасть',
     openCatalog: 'Каталог',
@@ -167,6 +179,10 @@ const ru = {
   /** Карточка детали. */
   partDetail: {
     remainingKm: 'осталось {{km}} км',
+    remainingMonthsPrimary_one: 'осталось {{months}} месяц',
+    remainingMonthsPrimary_few: 'осталось {{months}} месяца',
+    remainingMonthsPrimary_many: 'осталось {{months}} месяцев',
+    remainingMonthsPrimary_other: 'осталось {{months}} месяца',
     remainingMonths_one: 'или {{months}} месяц',
     remainingMonths_few: 'или {{months}} месяца',
     remainingMonths_many: 'или {{months}} месяцев',
@@ -177,17 +193,22 @@ const ru = {
     overdueMonths_many: 'просрочено на {{months}} месяцев',
     overdueMonths_other: 'просрочено на {{months}} месяца',
     name: 'Название',
+    editName: 'Изменить название',
     intervalKm: 'Интервал по пробегу',
     intervalMonths: 'Интервал по времени',
+    editIntervals: 'Изменить интервалы',
     intervalNotSet: 'не задан',
     changes: 'История замен',
     lastChange: 'последняя замена',
     noChanges: 'Замен пока нет',
+    noChangesHint: 'Замены подтягиваются из записей ТО — добавьте первую, и она появится здесь.',
     setLastChange: 'Указать последнюю замену',
     setLastChangeHint: 'Заведём запись ТО задним числом — с неё и начнётся отсчёт.',
     hide: 'Скрыть деталь',
     hideConfirm: 'Скрыть «{{name}}»?',
     hideWarning: 'Деталь пропадёт из списка, но история замен сохранится — вернуть её можно в каталоге.',
+    nameRequired: 'Название стереть нельзя',
+    intervalRequired: 'Без интервала ресурс не посчитать — оставьте хотя бы один',
   },
 
   /** Новая или отредактированная запчасть. */
@@ -267,6 +288,7 @@ const ru = {
     categoryHint: 'Определяет, в какую категорию попадёт стоимость услуги в разделе «Расходы».',
     commonServices: 'Частые услуги',
     itemCost: 'Стоимость',
+    editItemCost: 'Стоимость позиции',
     delete: 'Удалить запись',
     deleteConfirm: 'Удалить эту запись ТО?',
     deleteWarning: 'Ресурс деталей пересчитается без неё.',
@@ -275,6 +297,7 @@ const ru = {
   /** Вкладка «Расходы». */
   expenses: {
     title: 'Расходы',
+    period: 'Период',
     spentIn: 'Потрачено за {{year}}',
     spentAllTime: 'Потрачено за всё время',
     allTime: 'За всё время',
@@ -315,7 +338,14 @@ const ru = {
     importWarning:
       'Машины, каталоги и вся история ТО будут стёрты и заменены содержимым файла. Отменить это будет нельзя.',
     importDone: 'Данные заменены',
+    importDoneCars_one: '{{count}} машина',
+    importDoneCars_few: '{{count}} машины',
+    importDoneCars_many: '{{count}} машин',
+    importDoneCars_other: '{{count}} машины',
     importFailed: 'Не удалось прочитать файл',
+    importInvalidNotJson: 'Файл не читается как JSON — похоже, он повреждён.',
+    importInvalidWrongApp: 'Это JSON, но не из Car Reminder — нужен файл из «Экспортировать данные».',
+    importInvalidVersion: 'Файл сделан приложением посвежее — обновите Car Reminder и попробуйте снова.',
     version: 'Car Reminder · версия {{version}}',
   },
 
@@ -338,6 +368,8 @@ const ru = {
     submit: 'Добавить автомобиль',
     makeRequired: 'Укажите марку',
     modelRequired: 'Укажите модель',
+    yearInvalid: 'Такого года выпуска не бывает',
+    mileageRequired: 'Укажите текущий пробег',
   },
 
   /** Тип топлива: подписи кнопок в форме машины и строка в настройках. */
@@ -355,9 +387,13 @@ const ru = {
     automatic: 'Автомат',
   },
 
-  /** Ошибки сохранения — ключи из `ValidationCode`. */
+  /**
+   * Ошибки сохранения — ключи из `ValidationCode` плюс `date-invalid`: разбор даты
+   * происходит до валидации записи, поэтому своего кода у этой ошибки нет.
+   */
   validation: {
     'date-in-future': 'Дата ещё не наступила — выберите сегодняшний день или раньше',
+    'date-invalid': 'Дата набрана не полностью или такого дня не существует',
     'mileage-not-positive': 'Введите пробег числом — ноль и минус не подойдут',
     'mileage-below-earlier-record':
       'Пробег меньше, чем в записи от {{date}}: там уже {{mileage}} км. Одометр не крутится назад',
@@ -405,6 +441,7 @@ const ru = {
     back: 'Назад',
     close: 'Закрыть',
     ok: 'Понятно',
+    selectCar: 'Выбрать машину',
     optional: 'Можно не указывать',
     dash: '—',
     nothingFound: 'Ничего не нашлось',

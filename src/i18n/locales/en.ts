@@ -98,6 +98,11 @@ const en: Translations = {
     wheels: 'Tyres & wheels',
   },
 
+  garage: {
+    empty: 'No cars yet',
+    emptyHint: 'Add a car — the service history starts with it.',
+  },
+
   service: {
     'oil-change-labour': 'Oil change (labour)',
     diagnostics: 'Diagnostics',
@@ -112,7 +117,12 @@ const en: Translations = {
     updateMileage: 'Update mileage',
     mileageHint: 'It cannot go below what the history already holds',
     next: 'Next service',
+    noData: 'no services yet',
     inKm: 'in {{km}} km',
+    inMonths_one: 'in {{months}} month',
+    inMonths_few: 'in {{months}} months',
+    inMonths_many: 'in {{months}} months',
+    inMonths_other: 'in {{months}} months',
     orMonths_one: 'or {{months}} month',
     orMonths_few: 'or {{months}} months',
     orMonths_many: 'or {{months}} months',
@@ -145,6 +155,7 @@ const en: Translations = {
     remainingMonths: '{{months}} mo',
     overdue: 'overdue',
     overdueKm: '{{km}} km · overdue',
+    overdueMonths: '{{months}} mo · overdue',
     noData: 'no data',
     addCustom: 'Own part',
     openCatalog: 'Catalogue',
@@ -154,6 +165,10 @@ const en: Translations = {
 
   partDetail: {
     remainingKm: '{{km}} km left',
+    remainingMonthsPrimary_one: '{{months}} month left',
+    remainingMonthsPrimary_few: '{{months}} months left',
+    remainingMonthsPrimary_many: '{{months}} months left',
+    remainingMonthsPrimary_other: '{{months}} months left',
     remainingMonths_one: 'or {{months}} month',
     remainingMonths_few: 'or {{months}} months',
     remainingMonths_many: 'or {{months}} months',
@@ -164,17 +179,22 @@ const en: Translations = {
     overdueMonths_many: 'overdue by {{months}} months',
     overdueMonths_other: 'overdue by {{months}} months',
     name: 'Name',
+    editName: 'Edit name',
     intervalKm: 'Mileage interval',
     intervalMonths: 'Time interval',
+    editIntervals: 'Edit intervals',
     intervalNotSet: 'not set',
     changes: 'Replacement history',
     lastChange: 'last replacement',
     noChanges: 'No replacements yet',
+    noChangesHint: 'Replacements come from service records — add the first one and it shows up here.',
     setLastChange: 'Set the last replacement',
     setLastChangeHint: 'This adds a back-dated service record — the count starts from it.',
     hide: 'Hide part',
     hideConfirm: 'Hide “{{name}}”?',
     hideWarning: 'The part leaves the list, but its replacement history stays — you can bring it back from the catalogue.',
+    nameRequired: 'The name cannot be left blank',
+    intervalRequired: 'Without an interval there is nothing to count — keep at least one',
   },
 
   partForm: {
@@ -247,6 +267,7 @@ const en: Translations = {
     categoryHint: 'Decides which category the cost of this service lands in under Expenses.',
     commonServices: 'Common services',
     itemCost: 'Cost',
+    editItemCost: 'Item cost',
     delete: 'Delete record',
     deleteConfirm: 'Delete this service record?',
     deleteWarning: 'Part life will be recounted without it.',
@@ -254,6 +275,7 @@ const en: Translations = {
 
   expenses: {
     title: 'Expenses',
+    period: 'Period',
     spentIn: 'Spent in {{year}}',
     spentAllTime: 'Spent all time',
     allTime: 'All time',
@@ -293,7 +315,14 @@ const en: Translations = {
     importWarning:
       'Cars, catalogues and the whole service history will be wiped and replaced with the contents of the file. This cannot be undone.',
     importDone: 'Data replaced',
+    importDoneCars_one: '{{count}} car',
+    importDoneCars_few: '{{count}} cars',
+    importDoneCars_many: '{{count}} cars',
+    importDoneCars_other: '{{count}} cars',
     importFailed: 'Could not read the file',
+    importInvalidNotJson: 'The file does not read as JSON — it looks damaged.',
+    importInvalidWrongApp: 'This is JSON, but not from Car Reminder — pick a file made by “Export data”.',
+    importInvalidVersion: 'The file comes from a newer version of the app — update Car Reminder and try again.',
     version: 'Car Reminder · version {{version}}',
   },
 
@@ -315,6 +344,8 @@ const en: Translations = {
     submit: 'Add car',
     makeRequired: 'Enter the make',
     modelRequired: 'Enter the model',
+    yearInvalid: 'No car was built in that year',
+    mileageRequired: 'Enter the current mileage',
   },
 
   fuel: {
@@ -332,6 +363,7 @@ const en: Translations = {
 
   validation: {
     'date-in-future': 'That day has not come yet — pick today or earlier',
+    'date-invalid': 'The date is incomplete or there is no such day',
     'mileage-not-positive': 'Enter the mileage as a number — zero and minus will not do',
     'mileage-below-earlier-record':
       'Lower than the record of {{date}}, which already stands at {{mileage}} km. An odometer does not run backwards',
@@ -376,6 +408,7 @@ const en: Translations = {
     back: 'Back',
     close: 'Close',
     ok: 'Got it',
+    selectCar: 'Select car',
     optional: 'Optional',
     dash: '—',
     nothingFound: 'Nothing found',
