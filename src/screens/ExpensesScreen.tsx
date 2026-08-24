@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useTranslation } from 'react-i18next';
 import { Check, ChevronDown } from 'lucide-react-native';
 import { AppText, BottomSheet, Card, MonoText, SectionHeader } from '../ui';
@@ -69,6 +70,8 @@ export default function ExpensesScreen() {
   const { t } = useTranslation();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  // Высота таб-бара вместе с системной зоной: без неё разбивка по категориям уезжает под навигацию.
+  const tabBarHeight = useBottomTabBarHeight();
   const { activeCar, revision } = useGarage();
   const language = currentLanguage();
 
@@ -215,7 +218,13 @@ export default function ExpensesScreen() {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: sizes.screenPadding + tabBarHeight },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.totalBlock}>
           <AppText variant="sectionLabel">{totalLabel}</AppText>
           <MonoText weight="bold" size={36}>

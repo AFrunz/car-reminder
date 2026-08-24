@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'reac
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useTranslation } from 'react-i18next';
 import { Check, ListChecks, Plus } from 'lucide-react-native';
 
@@ -48,6 +49,8 @@ export default function PartsScreen() {
   const { t } = useTranslation();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  // Высота таб-бара вместе с системной зоной: без неё последняя строка уезжает под навигацию.
+  const tabBarHeight = useBottomTabBarHeight();
   const navigation = useNavigation<PartsNavigation>();
   const { activeCar, cars, setActiveCar, revision, loading: garageLoading } = useGarage();
   const language = currentLanguage();
@@ -224,7 +227,13 @@ export default function PartsScreen() {
           </AppText>
         </View>
       ) : (
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={[
+            styles.content,
+            { paddingBottom: spacing.xxl + tabBarHeight },
+          ]}
+        >
           {attention.length > 0 ? (
             <View style={styles.section}>
               <SectionHeader title={t('parts.needsAttention')} />

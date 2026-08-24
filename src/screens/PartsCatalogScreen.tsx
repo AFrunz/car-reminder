@@ -110,7 +110,10 @@ export default function PartsCatalogScreen({ navigation }: Props) {
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: spacing.xxl + insets.bottom },
+        ]}
         keyboardShouldPersistTaps="handled"
       >
         <View

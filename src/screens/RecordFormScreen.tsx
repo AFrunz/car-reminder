@@ -7,10 +7,16 @@ import {
   StyleSheet,
   TextInput,
   View,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
-import { Calculator, Check, Plus, Search, X } from 'lucide-react-native';
+import { parseISO } from 'date-fns';
+import { Calculator, Calendar, Check, Plus, Search, X } from 'lucide-react-native';
+import DateTimePicker, {
+  type DateTimePickerEvent,
+} from '@react-native-community/datetimepicker';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import {
@@ -86,30 +92,14 @@ const nextServiceKey = (): string => {
 
 /* ── Дата ───────────────────────────────────────────────────────────────── */
 
-/** Держит ввод в форме дд.мм.гггг, чтобы не пришлось разбирать произвольный текст. */
-function maskDate(input: string): string {
-  const digits = input.replace(/\D/g, '').slice(0, 8);
-  const chunks = [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 8)];
-  return chunks.filter((chunk) => chunk.length > 0).join('.');
-}
-
-/** дд.мм.гггг → ISO. null означает, что дата ещё не набрана или не существует. */
-function parseDateInput(input: string): string | null {
-  const match = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(input);
-  if (!match) return null;
-  const [, dd, mm, yyyy] = match;
-  const day = Number(dd);
-  const month = Number(mm);
-  const year = Number(yyyy);
-  const date = new Date(year, month - 1, day);
-  if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
-  ) {
-    return null;
-  }
-  return `${yyyy}-${mm}-${dd}`;
+/**
+ * Дата хранится в ISO, а выбирается системным календарём — разбирать текст не нужно.
+ * Собираем строку по локальным полям даты: `toISOString()` увёл бы день в UTC.
+ */
+function toIsoDate(date: Date): string {
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
 }
 
 /* ── Мелкие блоки, которых нет в src/ui ─────────────────────────────────── */
@@ -181,6 +171,35 @@ function SearchInput({ value, onChangeText, placeholder }: SearchInputProps) {
         style={[styles.searchInput, { color: colors.textPrimary }]}
       />
     </View>
+  );
+}
+
+interface DateFieldProps {
+  label: string;
+  value: string;
+  onPress: () => void;
+  style?: StyleProp<ViewStyle>;
+}
+
+/** Дата не набирается руками: поле только показывает значение и открывает календарь. */
+function DateField({ label, value, onPress, style }: DateFieldProps) {
+  const colors = useColors();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.dateField, style, { opacity: pressed ? 0.7 : 1 }]}
+    >
+      <AppText variant="label" tone="secondary" style={styles.dateLabel}>
+        {label}
+      </AppText>
+      <View
+        style={[styles.dateBox, { backgroundColor: colors.surface, borderColor: colors.border }]}
+      >
+        <MonoText size={fontSize.fieldValue}>{value}</MonoText>
+        <Calendar size={sizes.iconMd} color={colors.textTertiary} />
+      </View>
+    </Pressable>
   );
 }
 
@@ -306,7 +325,8 @@ export default function RecordFormScreen({ navigation, route }: Props) {
   const [loaded, setLoaded] = useState(false);
 
   /* Поля записи */
-  const [dateText, setDateText] = useState(() => formatShortDate(todayIso(), language));
+  const [dateIso, setDateIso] = useState<string>(() => todayIso());
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [mileageText, setMileageText] = useState('');
   const [kind, setKind] = useState<ServiceKind>('scheduled');
   const [partEntries, setPartEntries] = useState<PartEntry[]>([]);
@@ -315,7 +335,6 @@ export default function RecordFormScreen({ navigation, route }: Props) {
 
   /* Ошибки и предупреждения */
   const [errors, setErrors] = useState<ValidationError[]>([]);
-  const [dateInvalid, setDateInvalid] = useState(false);
   const [zeroPriced, setZeroPriced] = useState<string[]>([]);
 
   /* Шторка выбора деталей */
@@ -357,7 +376,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
       setExistingRecords(records);
       setKnownServices(names);
       if (record && !initialised.current) {
-        setDateText(formatShortDate(record.date, language));
+        setDateIso(record.date);
         setMileageText(formatNumber(record.mileage, language));
         setKind(record.kind);
         setTotalText(record.totalCost === null ? '' : formatNumber(record.totalCost, language));
@@ -416,6 +435,18 @@ export default function RecordFormScreen({ navigation, route }: Props) {
     ],
     [t],
   );
+
+  /* ── Дата ─────────────────────────────────────────────────────────────── */
+
+  /** Задним числом запись завести можно, будущим — нет (SPEC.md). */
+  const maxDate = useMemo(() => parseISO(todayIso()), []);
+
+  const onDateChange = useCallback((event: DateTimePickerEvent, selected?: Date) => {
+    // Android показывает календарь отдельным диалогом: после любого ответа он закрыт.
+    setDatePickerOpen(false);
+    if (event.type === 'dismissed' || !selected) return;
+    setDateIso(toIsoDate(selected));
+  }, []);
 
   /* ── Позиции ──────────────────────────────────────────────────────────── */
 
@@ -552,16 +583,9 @@ export default function RecordFormScreen({ navigation, route }: Props) {
 
   const save = useCallback(() => {
     if (!carId || !loaded) return;
-    const date = parseDateInput(dateText);
     const mileage = parseNumberInput(mileageText);
-    // Пока дата не разобрана, сверять линейность пробега не с чем — не шумим лишними ошибками.
-    setDateInvalid(date === null);
-    if (date === null) {
-      setErrors([]);
-      return;
-    }
     const found = validateServiceRecord(
-      { id: recordId, date, mileage: mileage ?? Number.NaN },
+      { id: recordId, date: dateIso, mileage: mileage ?? Number.NaN },
       existingRecords,
       todayIso(),
     );
@@ -589,7 +613,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
       await saveRecord(
         {
           carId,
-          date,
+          date: dateIso,
           mileage,
           kind,
           totalCost: parseNumberInput(totalText),
@@ -602,7 +626,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
     })();
   }, [
     carId,
-    dateText,
+    dateIso,
     existingRecords,
     kind,
     loaded,
@@ -639,9 +663,8 @@ export default function RecordFormScreen({ navigation, route }: Props) {
         mileage: error.conflictsWith ? formatNumber(error.conflictsWith.mileage, language) : '',
       }),
     );
-    if (dateInvalid) messages.unshift(t('validation.date-invalid'));
     return messages;
-  }, [dateInvalid, errors, language, t]);
+  }, [errors, language, t]);
 
   const content = (
     <ScrollView
@@ -649,16 +672,10 @@ export default function RecordFormScreen({ navigation, route }: Props) {
       keyboardShouldPersistTaps="handled"
     >
       <View style={styles.fieldsRow}>
-        <Field
+        <DateField
           label={t('recordForm.date')}
-          value={dateText}
-          onChangeText={(value) => {
-            setDateInvalid(false);
-            setDateText(maskDate(value));
-          }}
-          keyboardType="number-pad"
-          placeholder={formatShortDate(todayIso(), language)}
-          mono
+          value={formatShortDate(dateIso, language)}
+          onPress={() => setDatePickerOpen(true)}
           style={styles.flexField}
         />
         <Field
@@ -782,6 +799,17 @@ export default function RecordFormScreen({ navigation, route }: Props) {
         {content}
       </KeyboardAvoidingView>
 
+      {/* Системный календарь: на Android это отдельный диалог, живёт только пока открыт */}
+      {datePickerOpen ? (
+        <DateTimePicker
+          value={parseISO(dateIso)}
+          mode="date"
+          display="calendar"
+          maximumDate={maxDate}
+          onChange={onDateChange}
+        />
+      ) : null}
+
       {/* Шторка выбора детали */}
       <BottomSheet
         visible={partsSheetOpen}
@@ -803,11 +831,8 @@ export default function RecordFormScreen({ navigation, route }: Props) {
             placeholder={t('recordForm.searchCatalog')}
           />
         </View>
-        <ScrollView
-          style={styles.sheetList}
-          contentContainerStyle={styles.sheetListContent}
-          keyboardShouldPersistTaps="handled"
-        >
+        {/* Прокрутку и подъём над клавиатурой обеспечивает сама шторка */}
+        <View style={styles.sheetListContent}>
           {filteredParts.length === 0 ? (
             <AppText variant="caption" tone="tertiary">
               {t('common.nothingFound')}
@@ -837,7 +862,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
               </View>
             </Pressable>
           ))}
-        </ScrollView>
+        </View>
       </BottomSheet>
 
       {/* Шторка новой услуги: выбор категории показывается вместо тела, а не поверх него */}
@@ -857,11 +882,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
         }
       >
         {categoryPickerOpen ? (
-          <ScrollView
-            style={styles.sheetList}
-            contentContainerStyle={styles.sheetListContent}
-            keyboardShouldPersistTaps="handled"
-          >
+          <View style={styles.sheetListContent}>
             {CATEGORY_KEYS.map((key, index) => (
               <Pressable
                 accessibilityRole="button"
@@ -887,13 +908,9 @@ export default function RecordFormScreen({ navigation, route }: Props) {
                 ) : null}
               </Pressable>
             ))}
-          </ScrollView>
+          </View>
         ) : (
-          <ScrollView
-            style={styles.sheetList}
-            contentContainerStyle={styles.sheetBody}
-            keyboardShouldPersistTaps="handled"
-          >
+          <View style={styles.sheetBody}>
             <Field
               label={t('recordForm.serviceName')}
               value={serviceName}
@@ -938,7 +955,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
                 {t('common.optional')}
               </AppText>
             </View>
-          </ScrollView>
+          </View>
         )}
       </BottomSheet>
 
@@ -988,6 +1005,21 @@ const styles = StyleSheet.create({
   },
   flexField: {
     flex: 1,
+  },
+  dateField: {
+    gap: layout.field.gap,
+  },
+  dateLabel: {
+    fontFamily: fonts.uiMedium,
+  },
+  dateBox: {
+    alignItems: 'center',
+    borderRadius: radius.md,
+    borderWidth: sizes.border,
+    flexDirection: 'row',
+    height: sizes.fieldHeight,
+    justifyContent: 'space-between',
+    paddingHorizontal: layout.field.paddingHorizontal,
   },
   section: {
     gap: spacing.sm,
@@ -1068,10 +1100,6 @@ const styles = StyleSheet.create({
   },
   sheetPadded: {
     paddingHorizontal: layout.sheet.paddingHorizontal,
-  },
-  sheetList: {
-    flexGrow: 0,
-    maxHeight: 340,
   },
   sheetListContent: {
     paddingHorizontal: layout.sheet.paddingHorizontal,

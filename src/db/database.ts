@@ -1,4 +1,6 @@
 import * as SQLite from 'expo-sqlite';
+import { CATALOG_BY_FREQUENCY, isApplicable } from '../data/catalog';
+import type { FuelType, Transmission } from '../domain/types';
 
 export const DATABASE_NAME = 'car-reminder.db';
 
@@ -7,9 +9,12 @@ let database: SQLite.SQLiteDatabase | null = null;
 /**
  * Каждая миграция — шаг от предыдущей версии схемы к следующей. Номер последней
  * применённой хранится в `PRAGMA user_version`, поэтому обновление приложения
- * догоняет схему, не трогая пользовательские данные.
+ * догоняет схему, не трогая пользовательские данные. Шаг может быть как готовым
+ * SQL, так и функцией — когда данные нужно пересчитать по коду приложения.
  */
-const MIGRATIONS: string[] = [
+type Migration = string | ((db: SQLite.SQLiteDatabase) => Promise<void>);
+
+const MIGRATIONS: Migration[] = [
   `
   CREATE TABLE cars (
     id TEXT PRIMARY KEY NOT NULL,
@@ -66,6 +71,56 @@ const MIGRATIONS: string[] = [
     value TEXT NOT NULL
   );
   `,
+
+  /**
+   * Порядок деталей стал строиться по частоте замены, и в каталоге появились новые
+   * позиции. Уже заведённым машинам обе правки нужно доставить: иначе у старой машины
+   * список остался бы в исходном порядке и без новых деталей.
+   */
+  async (db) => {
+    const cars = await db.getAllAsync<{ id: string; fuel: string; transmission: string }>(
+      'SELECT id, fuel, transmission FROM cars',
+    );
+    for (const car of cars) {
+      const existing = await db.getAllAsync<{ catalog_key: string | null }>(
+        'SELECT catalog_key FROM parts WHERE car_id = ?',
+        car.id,
+      );
+      const known = new Set(existing.map((row) => row.catalog_key).filter(Boolean));
+
+      for (let i = 0; i < CATALOG_BY_FREQUENCY.length; i += 1) {
+        const entry = CATALOG_BY_FREQUENCY[i];
+        if (known.has(entry.key)) {
+          await db.runAsync(
+            'UPDATE parts SET sort_order = ? WHERE car_id = ? AND catalog_key = ?',
+            i,
+            car.id,
+            entry.key,
+          );
+        } else {
+          await db.runAsync(
+            `INSERT INTO parts (id, car_id, catalog_key, name, category_key,
+              interval_km, interval_months, tracked, custom, sort_order)
+             VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, ?)`,
+            `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+            car.id,
+            entry.key,
+            entry.category,
+            entry.intervalKm,
+            entry.intervalMonths,
+            isApplicable(entry, car.fuel as FuelType, car.transmission as Transmission) ? 1 : 0,
+            i,
+          );
+        }
+      }
+      // Свои детали остаются в конце списка, сохраняя относительный порядок.
+      await db.runAsync(
+        'UPDATE parts SET sort_order = sort_order + ? WHERE car_id = ? AND catalog_key IS NULL',
+        CATALOG_BY_FREQUENCY.length,
+        car.id,
+      );
+    }
+  },
 ];
 
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
@@ -81,8 +136,10 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
   const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
   let version = row?.user_version ?? 0;
   for (let i = version; i < MIGRATIONS.length; i += 1) {
+    const migration = MIGRATIONS[i];
     await db.withTransactionAsync(async () => {
-      await db.execAsync(MIGRATIONS[i]);
+      if (typeof migration === 'string') await db.execAsync(migration);
+      else await migration(db);
     });
     version = i + 1;
     await db.execAsync(`PRAGMA user_version = ${version}`);

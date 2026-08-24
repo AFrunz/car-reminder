@@ -46,6 +46,7 @@ export const CATALOG: CatalogEntry[] = [
   { key: 'fuel-filter', category: 'fuel', intervalKm: 30_000, intervalMonths: 24, fuel: ICE },
   { key: 'fuel-pump-strainer', category: 'fuel', intervalKm: 60_000, intervalMonths: null, fuel: ICE },
   { key: 'injectors-cleaning', category: 'fuel', intervalKm: 60_000, intervalMonths: null, fuel: ICE },
+  { key: 'throttle-cleaning', category: 'fuel', intervalKm: 60_000, intervalMonths: null, fuel: ICE },
 
   // Трансмиссия
   { key: 'atf-and-filter', category: 'transmission', intervalKm: 60_000, intervalMonths: 48, transmission: ['automatic'] },
@@ -93,6 +94,25 @@ export const CATALOG: CatalogEntry[] = [
   { key: 'summer-tires', category: 'wheels', intervalKm: 50_000, intervalMonths: 72 },
   { key: 'winter-tires', category: 'wheels', intervalKm: 50_000, intervalMonths: 72 },
 ];
+
+/**
+ * Насколько часто деталь меняют — по этому значению строятся все списки: то, что
+ * трогают каждое ТО, должно быть под рукой, а не в конце списка из полусотни позиций.
+ * Временной интервал переводим в километры по грубой оценке 1000 км в месяц, иначе
+ * детали вроде салонного фильтра или тормозной жидкости, у которых срок диктует время,
+ * оказались бы рядом с деталями на сто тысяч пробега.
+ */
+export function replacementRank(entry: Pick<CatalogEntry, 'intervalKm' | 'intervalMonths'>): number {
+  const byKm = entry.intervalKm ?? Number.POSITIVE_INFINITY;
+  const byMonths =
+    entry.intervalMonths != null ? entry.intervalMonths * 1000 : Number.POSITIVE_INFINITY;
+  return Math.min(byKm, byMonths);
+}
+
+/** Каталог в порядке убывания частоты замены — именно он определяет порядок в списках. */
+export const CATALOG_BY_FREQUENCY: CatalogEntry[] = [...CATALOG].sort(
+  (a, b) => replacementRank(a) - replacementRank(b),
+);
 
 /** Подходит ли позиция каталога конкретной машине. */
 export function isApplicable(

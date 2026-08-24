@@ -38,6 +38,7 @@ const en: Translations = {
     'fuel-filter': 'Fuel filter',
     'fuel-pump-strainer': 'Fuel pump strainer',
     'injectors-cleaning': 'Injector cleaning',
+    'throttle-cleaning': 'Throttle body cleaning',
 
     // Transmission
     'atf-and-filter': 'Automatic gearbox oil & filter',

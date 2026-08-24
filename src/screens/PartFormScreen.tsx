@@ -222,7 +222,7 @@ export default function PartFormScreen() {
       >
         <ScrollView
           style={styles.categoryList}
-          contentContainerStyle={{ paddingBottom: layout.sheet.footerPaddingBottom + insets.bottom }}
+          contentContainerStyle={{ paddingBottom: layout.sheet.footerPaddingBottom }}
         >
           {CATEGORY_KEYS.map((key) => {
             const selected = key === categoryKey;

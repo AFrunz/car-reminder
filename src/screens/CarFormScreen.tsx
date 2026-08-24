@@ -189,7 +189,10 @@ export default function CarFormScreen() {
         keyboardVerticalOffset={insets.top + sizes.appBarHeight}
       >
         <ScrollView
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[
+            styles.content,
+            { paddingBottom: sizes.screenPadding + insets.bottom },
+          ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >

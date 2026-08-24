@@ -3,6 +3,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useTranslation } from 'react-i18next';
 import { Car as CarIcon, Check, ChevronRight, Download, Plus, Upload } from 'lucide-react-native';
 import { AppText, BottomSheet, SectionHeader } from '../ui';
@@ -40,6 +41,8 @@ export default function SettingsScreen() {
   const { t } = useTranslation();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  // Высота таб-бара вместе с системной зоной: без неё строка версии уезжает под навигацию.
+  const tabBarHeight = useBottomTabBarHeight();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { cars, refresh } = useGarage();
   const { preference, setPreference } = useTheme();
@@ -106,7 +109,13 @@ export default function SettingsScreen() {
         </AppText>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: sizes.screenPadding + tabBarHeight },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.group}>
           <SectionHeader title={t('settings.cars')} />
           <View style={[styles.card, { backgroundColor: colors.surface }]}>

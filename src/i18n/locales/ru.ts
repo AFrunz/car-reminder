@@ -42,6 +42,7 @@ const ru = {
     'fuel-filter': 'Топливный фильтр',
     'fuel-pump-strainer': 'Сетка бензонасоса',
     'injectors-cleaning': 'Форсунки (чистка)',
+    'throttle-cleaning': 'Дроссель (чистка)',
 
     // Трансмиссия
     'atf-and-filter': 'Масло АКПП и фильтр',

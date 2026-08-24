@@ -11,6 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useTranslation } from 'react-i18next';
 import { Check, Pencil, Plus } from 'lucide-react-native';
 
@@ -156,6 +157,8 @@ function RecordCard({ record, partNames, language, onPress, onLongPress }: Recor
 export default function ServiceScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  // Высота таб-бара вместе с системной зоной: без неё последняя карточка уезжает под навигацию.
+  const tabBarHeight = useBottomTabBarHeight();
   const navigation = useNavigation<Navigation>();
   const { t, i18n } = useTranslation();
   const language: Language = i18n.language === 'ru' ? 'ru' : 'en';
@@ -455,7 +458,10 @@ export default function ServiceScreen() {
               />
             </View>
           }
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[
+            styles.listContent,
+            { paddingBottom: spacing.md + tabBarHeight },
+          ]}
           showsVerticalScrollIndicator={false}
         />
       )}
@@ -496,7 +502,7 @@ export default function ServiceScreen() {
         onClose={() => setSheet('none')}
         title={t('common.selectCar')}
       >
-        <View style={[styles.carList, { paddingBottom: insets.bottom + spacing.md }]}>
+        <View style={[styles.carList, { paddingBottom: spacing.md }]}>
           {cars.map((car) => (
             <Pressable
               key={car.id}

@@ -137,6 +137,24 @@ export const layout = {
     paddingHorizontal: 16,
     footerPaddingTop: 12,
     footerPaddingBottom: 16,
+    /** Доля высоты экрана, выше которой шторка не растёт: содержимое уходит в скролл. */
+    maxHeightRatio: 0.9,
+  },
+} as const;
+
+/** Длительности, пороги и упругость анимаций. */
+export const motion = {
+  sheet: {
+    openDuration: 260,
+    closeDuration: 200,
+    /** Доля высоты шторки, после которой отпущенный свайп её закрывает. */
+    dismissDistanceRatio: 1 / 3,
+    /** Скорость свайпа вниз (px/ms), закрывающая шторку независимо от пройденного пути. */
+    dismissVelocity: 0.6,
+    /** С этого смещения вертикальное движение считается перетаскиванием, а не тапом. */
+    dragActivationDistance: 6,
+    springTension: 90,
+    springFriction: 12,
   },
 } as const;
 

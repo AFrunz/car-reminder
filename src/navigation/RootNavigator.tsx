@@ -3,6 +3,7 @@ import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gauge, Wrench, Wallet, Settings as SettingsIcon } from 'lucide-react-native';
 import { useTheme } from '../theme/ThemeProvider';
 import { fonts, sizes } from '../theme/tokens';
@@ -24,6 +25,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 function Tabs() {
   const { colors } = useTheme();
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
 
   return (
     <Tab.Navigator
@@ -31,9 +33,12 @@ function Tabs() {
         headerShown: false,
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.textTertiary,
+        // Высота из макета плюс системная зона жестов, иначе кнопки навигации
+        // телефона накрывают подписи вкладок.
         tabBarStyle: {
-          height: sizes.tabBarHeight,
+          height: sizes.tabBarHeight + insets.bottom,
           paddingTop: 10,
+          paddingBottom: insets.bottom,
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
         },

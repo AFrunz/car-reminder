@@ -1,6 +1,6 @@
 import type { SQLiteBindValue } from 'expo-sqlite';
 import { getDatabase, createId, todayIso } from './database';
-import { CATALOG, isApplicable } from '../data/catalog';
+import { CATALOG_BY_FREQUENCY, isApplicable } from '../data/catalog';
 import type {
   Car,
   CategoryKey,
@@ -90,8 +90,8 @@ export async function createCar(input: NewCar): Promise<Car> {
       input.serviceIntervalMonths ?? 12,
       createdAt,
     );
-    for (let i = 0; i < CATALOG.length; i += 1) {
-      const entry = CATALOG[i];
+    for (let i = 0; i < CATALOG_BY_FREQUENCY.length; i += 1) {
+      const entry = CATALOG_BY_FREQUENCY[i];
       await db.runAsync(
         `INSERT INTO parts (id, car_id, catalog_key, name, category_key,
           interval_km, interval_months, tracked, custom, sort_order)
