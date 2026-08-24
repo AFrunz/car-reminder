@@ -1,6 +1,6 @@
 {
   "name": "car-reminder",
-  "version": "0.1.0",
+  "version": "0.0.0-dev",
   "main": "index.ts",
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
