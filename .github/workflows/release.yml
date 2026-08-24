@@ -39,30 +39,42 @@ jobs:
       - name: Сгенерировать нативный проект
         run: npx expo prebuild --platform android --no-install
 
-      # Все релизы обязаны быть подписаны одним ключом: если он сменится,
-      # обновление поверх установленного приложения не встанет и данные пропадут.
+      # Свой ключ необязателен: prebuild кладёт в проект debug.keystore из шаблона,
+      # и release-сборка по умолчанию подписывается им. Ключ этот фиксированный —
+      # один и тот же при каждой генерации, поэтому обновления ставятся поверх.
+      # Но он публичный и общий для всех проектов на React Native, так что любой
+      # может собрать APK с той же подписью. Как только секрет ANDROID_KEYSTORE_BASE64
+      # появится, сборка молча переключится на него.
       - name: Развернуть keystore
+        id: keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::Секрет ANDROID_KEYSTORE_BASE64 не задан — релизный APK подписать нечем."
-            exit 1
+            echo "::warning::Секрет ANDROID_KEYSTORE_BASE64 не задан — APK будет подписан общим debug-ключом React Native."
+            echo "custom=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
+            echo "custom=true" >> "$GITHUB_OUTPUT"
           fi
-          echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
 
       - name: Собрать релизный APK
         env:
+          CUSTOM_KEYSTORE: ${{ steps.keystore.outputs.custom }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         working-directory: android
         run: |
-          ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/android/app/release.keystore \
-            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
-            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
-            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+          if [ "$CUSTOM_KEYSTORE" = "true" ]; then
+            ./gradlew assembleRelease \
+              -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/android/app/release.keystore" \
+              -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+              -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+              -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+          else
+            ./gradlew assembleRelease
+          fi
 
       - name: Переименовать APK по тегу
         run: |
