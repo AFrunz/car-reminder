@@ -151,6 +151,7 @@ interface PartRow {
   interval_km: number | null;
   interval_months: number | null;
   tracked: number;
+  pinned: number;
   custom: number;
   sort_order: number;
 }
@@ -164,6 +165,7 @@ const toPart = (r: PartRow): Part => ({
   intervalKm: r.interval_km,
   intervalMonths: r.interval_months,
   tracked: r.tracked === 1,
+  pinned: r.pinned === 1,
   custom: r.custom === 1,
   sortOrder: r.sort_order,
 });
@@ -217,7 +219,9 @@ export async function createCustomPart(input: NewPart): Promise<Part> {
 
 export async function updatePart(
   id: string,
-  patch: Partial<Pick<Part, 'name' | 'categoryKey' | 'intervalKm' | 'intervalMonths' | 'tracked'>>,
+  patch: Partial<
+    Pick<Part, 'name' | 'categoryKey' | 'intervalKm' | 'intervalMonths' | 'tracked' | 'pinned'>
+  >,
 ): Promise<void> {
   const db = await getDatabase();
   const fields: string[] = [];
@@ -241,6 +245,10 @@ export async function updatePart(
   if (patch.tracked !== undefined) {
     fields.push('tracked = ?');
     values.push(patch.tracked ? 1 : 0);
+  }
+  if (patch.pinned !== undefined) {
+    fields.push('pinned = ?');
+    values.push(patch.pinned ? 1 : 0);
   }
   if (fields.length === 0) return;
   await db.runAsync(`UPDATE parts SET ${fields.join(', ')} WHERE id = ?`, ...values, id);

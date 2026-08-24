@@ -12,7 +12,7 @@ import { useNavigation, useRoute, type RouteProp } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
-import { Pencil } from 'lucide-react-native';
+import { Pencil, Star, StarOff } from 'lucide-react-native';
 import {
   AppBar,
   AppText,
@@ -173,6 +173,22 @@ export default function PartDetailScreen() {
     })();
   }, [kmDraft, monthsDraft, partId, refresh]);
 
+  /**
+   * Закрепление в избранном. Локальное состояние обновляем сразу, не дожидаясь
+   * перезагрузки по `revision`, — иначе звезда переключается с заметной задержкой.
+   */
+  const togglePinned = useCallback(() => {
+    if (part === null) return;
+    const next = !part.pinned;
+    void (async () => {
+      await updatePart(partId, { pinned: next });
+      setData((current) =>
+        current === null ? current : { ...current, part: { ...current.part, pinned: next } },
+      );
+      refresh();
+    })();
+  }, [part, partId, refresh]);
+
   const confirmHide = useCallback(() => {
     Alert.alert(t('partDetail.hideConfirm', { name: partName }), t('partDetail.hideWarning'), [
       { text: t('common.cancel'), style: 'cancel' },
@@ -195,7 +211,26 @@ export default function PartDetailScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: colors.bg, paddingTop: insets.top }]}>
-      <AppBar title={partName} onBack={navigation.goBack} />
+      <AppBar
+        title={partName}
+        onBack={navigation.goBack}
+        right={
+          part === null ? undefined : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={part.pinned ? t('partDetail.unpin') : t('partDetail.pin')}
+              onPress={togglePinned}
+              style={({ pressed }) => [styles.pinButton, { opacity: pressed ? 0.7 : 1 }]}
+            >
+              {part.pinned ? (
+                <Star size={sizes.iconBack} color={colors.accent} />
+              ) : (
+                <StarOff size={sizes.iconBack} color={colors.textPrimary} />
+              )}
+            </Pressable>
+          )
+        }
+      />
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -579,6 +614,13 @@ const styles = StyleSheet.create({
   lastChange: {
     fontFamily: fonts.uiSemibold,
     fontSize: LAST_CHANGE_SIZE,
+  },
+  /** Та же зона нажатия, что у стрелки «назад», — шапка остаётся симметричной. */
+  pinButton: {
+    alignItems: 'center',
+    height: sizes.iconButton,
+    justifyContent: 'center',
+    width: sizes.iconButton,
   },
   hideButton: {
     alignItems: 'center',

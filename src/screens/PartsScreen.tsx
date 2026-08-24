@@ -45,6 +45,10 @@ interface Subtitle {
 
 const carTitle = (car: Car): string => `${car.make} ${car.model}`;
 
+/** Сначала самые критичные: сортировка по возрастанию остатка ресурса. */
+const byRemaining = (a: PartResource, b: PartResource): number =>
+  (a.resource.value ?? 0) - (b.resource.value ?? 0);
+
 export default function PartsScreen() {
   const { t } = useTranslation();
   const colors = useColors();
@@ -165,23 +169,33 @@ export default function PartsScreen() {
     [language, t],
   );
 
-  /** Сначала самые критичные: сортировка по возрастанию остатка. */
-  const attention = useMemo(
-    () =>
-      items
-        .filter(({ resource }) => resource.status === 'overdue' || resource.status === 'warn')
-        .sort((a, b) => (a.resource.value ?? 0) - (b.resource.value ?? 0)),
-    [items],
-  );
-
-  const groups = useMemo(
-    () =>
-      CATEGORY_KEYS.map((key) => ({
+  /**
+   * Раскладка списка по секциям. Приоритет — «Избранное» → «Требует внимания» → категории:
+   * деталь занимает первую подходящую секцию и ниже по списку уже не повторяется, поэтому
+   * закреплённая просрочка видна только в избранном, а внимание не дублируется категорией.
+   */
+  const { pinned, attention, groups } = useMemo(() => {
+    const pinnedRows: PartResource[] = [];
+    const attentionRows: PartResource[] = [];
+    const rest: PartResource[] = [];
+    for (const item of items) {
+      if (item.part.pinned) {
+        pinnedRows.push(item);
+      } else if (item.resource.status === 'overdue' || item.resource.status === 'warn') {
+        attentionRows.push(item);
+      } else {
+        rest.push(item);
+      }
+    }
+    return {
+      pinned: pinnedRows.sort(byRemaining),
+      attention: attentionRows.sort(byRemaining),
+      groups: CATEGORY_KEYS.map((key) => ({
         key,
-        rows: items.filter(({ part }) => part.categoryKey === key),
+        rows: rest.filter(({ part }) => part.categoryKey === key),
       })).filter((group) => group.rows.length > 0),
-    [items],
-  );
+    };
+  }, [items]);
 
   const toggleCategory = useCallback((key: CategoryKey) => {
     setCollapsed((current) => ({ ...current, [key]: !current[key] }));
@@ -254,6 +268,14 @@ export default function PartsScreen() {
             { paddingBottom: spacing.xxl + tabBarHeight },
           ]}
         >
+          {/* Пустое избранное секции не заводит: заголовок без строк — просто шум. */}
+          {pinned.length > 0 ? (
+            <View style={styles.section}>
+              <SectionHeader title={t('parts.pinned')} />
+              {pinned.map(renderRow)}
+            </View>
+          ) : null}
+
           {attention.length > 0 ? (
             <View style={styles.section}>
               <SectionHeader title={t('parts.needsAttention')} />

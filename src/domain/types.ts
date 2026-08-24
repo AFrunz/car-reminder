@@ -46,6 +46,8 @@ export interface Part {
   intervalMonths: number | null;
   /** Отслеживается ли деталь: выключенные не показываются на вкладке «Запчасти». */
   tracked: boolean;
+  /** Закреплена в избранном — показывается отдельной секцией в самом верху списка. */
+  pinned: boolean;
   custom: boolean;
   sortOrder: number;
 }

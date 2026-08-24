@@ -148,6 +148,9 @@ const MIGRATIONS: Migration[] = [
     const cars = await db.getAllAsync<CarRowForSync>('SELECT id, fuel, transmission FROM cars');
     for (const car of cars) await syncCatalogForCar(db, car);
   },
+
+  /** Избранные детали: закреплённые показываются отдельной секцией в начале списка. */
+  'ALTER TABLE parts ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0',
 ];
 
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
