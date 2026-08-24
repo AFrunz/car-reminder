@@ -21,7 +21,7 @@ import { useColors } from '../theme/ThemeProvider';
 import { layout, sizes, spacing } from '../theme/tokens';
 import { useGarage } from '../state/GarageContext';
 import { lastChangesForCar, listParts, listRecords, todayIso } from '../db/repositories';
-import { calculateResource, type Resource } from '../domain/resource';
+import { baselineForCar, calculateResource, type Resource } from '../domain/resource';
 import { effectiveMileage } from '../domain/validation';
 import { CATEGORY_KEYS, type Car, type CategoryKey, type Part } from '../domain/types';
 import { formatNumber, formatSigned } from '../lib/format';
@@ -63,9 +63,11 @@ export default function PartsScreen() {
   const carId = activeCar?.id;
   // Пробег входит в зависимости отдельно: после его обновления ресурс всех деталей меняется.
   const carMileage = activeCar?.mileage;
+  // Год выпуска — точка отсчёта для деталей, которые ни разу не меняли.
+  const carYear = activeCar?.year;
 
   useEffect(() => {
-    if (carId === undefined || carMileage === undefined) {
+    if (carId === undefined || carMileage === undefined || carYear === undefined) {
       setItems([]);
       setLoading(false);
       return;
@@ -81,10 +83,11 @@ export default function PartsScreen() {
       if (cancelled) return;
       const mileage = effectiveMileage(carMileage, records);
       const today = todayIso();
+      const baseline = baselineForCar({ year: carYear });
       setItems(
         parts.map((part) => ({
           part,
-          resource: calculateResource(part, changes[part.id] ?? null, mileage, today),
+          resource: calculateResource(part, changes[part.id] ?? null, mileage, today, baseline),
         })),
       );
       setLoading(false);
@@ -92,7 +95,7 @@ export default function PartsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [carId, carMileage, revision]);
+  }, [carId, carMileage, carYear, revision]);
 
   /** У каталожной детали своего имени нет — оно живёт в переводах под `catalog.<ключ>`. */
   const resolveName = useCallback(
@@ -105,11 +108,28 @@ export default function PartsScreen() {
    * Подпись под названием — остаток ресурса словами. Для просрочки показываем
    * километровое число (со знаком минус при перепробеге) и слово «просрочено»:
    * цвет здесь означает худшее из двух ограничений, а число — всегда километровое.
+   *
+   * Прочерк остаётся только у `no-data` — когда у детали не задан ни один интервал и
+   * считать попросту нечего. Ресурс, посчитанный от начала жизни машины, показывает
+   * обычные числа и тон по статусу, а допущение выдаёт приписка «нет данных».
    */
   const describe = useCallback(
     (resource: Resource): Subtitle => {
-      const { status, kmLeft, monthsLeft } = resource;
+      const { status, kmLeft, monthsLeft, assumed } = resource;
       if (status === 'no-data') return { text: t('parts.noData'), tone: 'tertiary' };
+      if (assumed) {
+        const tone: TextTone =
+          status === 'overdue' ? 'danger' : status === 'warn' ? 'warn' : 'secondary';
+        // Одно число вместо двух: третьим сегментом строка перестаёт читаться.
+        const value =
+          kmLeft != null
+            ? t('parts.remainingKm', { km: formatSigned(kmLeft, language) })
+            : monthsLeft != null
+              ? t('parts.remainingMonths', { months: formatSigned(monthsLeft, language) })
+              : null;
+        if (value === null) return { text: t('parts.noData'), tone: 'tertiary' };
+        return { text: t('parts.assumed', { value }), tone };
+      }
       if (status === 'overdue') {
         return {
           text:

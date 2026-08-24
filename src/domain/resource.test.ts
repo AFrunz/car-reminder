@@ -1,10 +1,50 @@
-import { calculateResource, calculateNextService, WARN_THRESHOLD } from './resource';
+import {
+  calculateResource,
+  calculateNextService,
+  baselineForCar,
+  WARN_THRESHOLD,
+} from './resource';
 
 const TODAY = '2025-03-12';
+// Машина 2014 года: точка отсчёта для детали, которую ни разу не меняли.
+const BASELINE = baselineForCar({ year: 2014 });
 
 describe('calculateResource', () => {
-  it('возвращает «нет данных», когда деталь ни разу не меняли', () => {
-    const r = calculateResource({ intervalKm: 10_000, intervalMonths: 12 }, null, 148_320, TODAY);
+  it('считает деталь без замен неменянной с начала жизни машины', () => {
+    const r = calculateResource(
+      { intervalKm: 10_000, intervalMonths: 12 },
+      null,
+      148_320,
+      TODAY,
+      BASELINE,
+    );
+    // Ресурс на 10 000 км, а машина проехала 148 320 без единой замены — это просрочка,
+    // а не неизвестность.
+    expect(r.assumed).toBe(true);
+    expect(r.status).toBe('overdue');
+    expect(r.kmLeft).toBe(-138_320);
+    expect(r.value).toBe(0);
+  });
+
+  it('не помечает допущением расчёт, у которого есть запись о замене', () => {
+    const r = calculateResource(
+      { intervalKm: 10_000, intervalMonths: 12 },
+      { mileage: 145_000, date: '2025-03-01' },
+      148_000,
+      TODAY,
+      BASELINE,
+    );
+    expect(r.assumed).toBe(false);
+  });
+
+  it('отдаёт «нет данных» только когда считать нечем — интервалы не заданы', () => {
+    const r = calculateResource(
+      { intervalKm: null, intervalMonths: null },
+      null,
+      148_320,
+      TODAY,
+      BASELINE,
+    );
     expect(r.status).toBe('no-data');
     expect(r.value).toBeNull();
     expect(r.basis).toBeNull();
@@ -16,6 +56,7 @@ describe('calculateResource', () => {
       { mileage: 140_000, date: '2024-03-12' },
       148_320,
       TODAY,
+      BASELINE,
     );
     expect(r.status).toBe('no-data');
   });
@@ -26,6 +67,7 @@ describe('calculateResource', () => {
       { mileage: 145_000, date: '2025-03-01' },
       148_000,
       TODAY,
+      BASELINE,
     );
     expect(r.basis).toBe('km');
     expect(r.kmLeft).toBe(7_000);
@@ -39,6 +81,7 @@ describe('calculateResource', () => {
       { mileage: 100_000, date: '2024-03-12' },
       148_320,
       TODAY,
+      BASELINE,
     );
     expect(r.basis).toBe('time');
     expect(r.kmLeft).toBeNull();
@@ -52,6 +95,7 @@ describe('calculateResource', () => {
       { mileage: 55_000, date: '2019-01-01' },
       148_000,
       TODAY,
+      BASELINE,
     );
     expect(r.status).toBe('overdue');
     expect(r.value).toBe(0);
@@ -65,6 +109,7 @@ describe('calculateResource', () => {
       { mileage: 143_000, date: '2023-01-01' },
       148_000,
       TODAY,
+      BASELINE,
     );
     expect(r.status).toBe('overdue');
     expect(r.kmLeft).toBe(5_000);
@@ -80,6 +125,7 @@ describe('calculateResource', () => {
       { mileage: 140_000, date: '2024-06-01' },
       148_100,
       TODAY,
+      BASELINE,
     );
     expect(r.value).toBe(WARN_THRESHOLD - 1);
     expect(r.status).toBe('warn');
@@ -91,6 +137,7 @@ describe('calculateResource', () => {
       { mileage: 150_000, date: '2025-03-01' },
       148_000,
       TODAY,
+      BASELINE,
     );
     expect(r.value).toBe(100);
   });
@@ -98,7 +145,7 @@ describe('calculateResource', () => {
 
 describe('calculateNextService', () => {
   it('возвращает null, когда регулярных ТО нет', () => {
-    expect(calculateNextService(0, 0, { mileage: 140_000, date: '2024-01-01' }, 148_000, TODAY))
+    expect(calculateNextService(0, 0, { mileage: 140_000, date: '2024-01-01' }, 148_000, TODAY, BASELINE))
       .toBeNull();
   });
 
@@ -109,6 +156,7 @@ describe('calculateNextService', () => {
       { mileage: 145_000, date: '2024-11-12' },
       148_000,
       TODAY,
+      BASELINE,
     );
     expect(next).not.toBeNull();
     expect(next!.kmLeft).toBe(7_000);
@@ -116,9 +164,11 @@ describe('calculateNextService', () => {
     expect(next!.monthsLeft).toBe(8);
   });
 
-  it('отдаёт «нет данных», пока не было ни одного регулярного ТО', () => {
-    const next = calculateNextService(10_000, 12, null, 148_000, TODAY);
-    expect(next!.status).toBe('no-data');
-    expect(next!.dueAtMileage).toBeNull();
+  it('считает ТО ни разу не сделанным, пока в истории нет регулярных записей', () => {
+    const next = calculateNextService(10_000, 12, null, 148_000, TODAY, BASELINE);
+    expect(next!.assumed).toBe(true);
+    expect(next!.status).toBe('overdue');
+    // Отсчёт от нулевого пробега, поэтому срок ТО наступил ещё на десяти тысячах.
+    expect(next!.dueAtMileage).toBe(10_000);
   });
 });

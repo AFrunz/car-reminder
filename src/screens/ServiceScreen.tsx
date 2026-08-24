@@ -40,7 +40,7 @@ import {
   listRecordsWithItems,
   updateCar,
 } from '../db/repositories';
-import { calculateNextService, type LastChange } from '../domain/resource';
+import { baselineForCar, calculateNextService, type LastChange } from '../domain/resource';
 import { effectiveMileage, validateMileageUpdate } from '../domain/validation';
 import type { Car, Part, ServiceRecordWithItems } from '../domain/types';
 import { formatDate, formatNumber, parseNumberInput } from '../lib/format';
@@ -220,6 +220,7 @@ export default function ServiceScreen() {
         lastScheduled,
         mileage,
         todayIso(),
+        baselineForCar(activeCar),
       )
     : null;
 
@@ -351,32 +352,27 @@ export default function ServiceScreen() {
               <AppText tone="secondary" style={styles.nextCaption}>
                 {t('service.next')}
               </AppText>
-              {nextService.status === 'no-data' ? (
-                <MonoText tone="tertiary" weight="bold" size={TYPE.distance}>
-                  {t('service.noData')}
-                </MonoText>
-              ) : (
-                <MonoText
-                  weight="bold"
-                  size={TYPE.distance}
-                  tone={nextService.status === 'overdue' ? 'danger' : 'primary'}
-                >
-                  {nextService.kmLeft != null
-                    ? nextService.kmLeft < 0
-                      ? t('service.overdueByKm', {
-                          km: formatNumber(Math.abs(nextService.kmLeft), language),
-                        })
-                      : t('service.inKm', { km: formatNumber(nextService.kmLeft, language) })
-                    : nextService.monthsLeft != null && nextService.monthsLeft >= 0
-                      ? t('service.inMonths', {
-                          count: nextService.monthsLeft,
-                          months: formatNumber(nextService.monthsLeft, language),
-                        })
-                      : t('service.overdue')}
-                </MonoText>
-              )}
+              {/* Регулярных ТО могло не быть ни разу — числа всё равно считаем, от нуля. */}
+              <MonoText
+                weight="bold"
+                size={TYPE.distance}
+                tone={nextService.status === 'overdue' ? 'danger' : 'primary'}
+              >
+                {nextService.kmLeft != null
+                  ? nextService.kmLeft < 0
+                    ? t('service.overdueByKm', {
+                        km: formatNumber(Math.abs(nextService.kmLeft), language),
+                      })
+                    : t('service.inKm', { km: formatNumber(nextService.kmLeft, language) })
+                  : nextService.monthsLeft != null && nextService.monthsLeft >= 0
+                    ? t('service.inMonths', {
+                        count: nextService.monthsLeft,
+                        months: formatNumber(nextService.monthsLeft, language),
+                      })
+                    : t('service.overdue')}
+              </MonoText>
             </View>
-            {nextService.status !== 'no-data' && nextService.monthsLeft != null ? (
+            {nextService.monthsLeft != null ? (
               <AppText
                 tone={nextService.monthsLeft < 0 ? 'danger' : 'tertiary'}
                 style={styles.nextMonths}
@@ -392,6 +388,12 @@ export default function ServiceScreen() {
           </View>
 
           <ProgressBar value={nextService.value ?? 0} status={nextService.status} />
+
+          {nextService.assumed ? (
+            <AppText tone="tertiary" style={styles.nextAssumed}>
+              {t('service.assumedHint')}
+            </AppText>
+          ) : null}
 
           {lastScheduled || nextService.dueAtMileage != null ? (
             <View style={styles.nextBottomRow}>
@@ -602,6 +604,9 @@ const styles = StyleSheet.create({
   },
   nextMonths: {
     fontSize: fontSize.banner,
+  },
+  nextAssumed: {
+    fontSize: TYPE.note,
   },
   nextBottomRow: {
     flexDirection: 'row',

@@ -132,6 +132,7 @@ const en: Translations = {
     dueAt: 'next · {{mileage}} km',
     overdue: 'service due',
     overdueByKm: '{{km}} km over',
+    assumedHint: 'no data on past services — counting from zero mileage',
   },
 
   records: {
@@ -158,6 +159,7 @@ const en: Translations = {
     overdueKm: '{{km}} km · overdue',
     overdueMonths: '{{months}} mo · overdue',
     noData: 'no data',
+    assumed: '{{value}} · no data',
     addCustom: 'Own part',
     openCatalog: 'Catalogue',
     empty: 'Nothing to track',
@@ -189,6 +191,8 @@ const en: Translations = {
     lastChange: 'last replacement',
     noChanges: 'No replacements yet',
     noChangesHint: 'Replacements come from service records — add the first one and it shows up here.',
+    assumedHint:
+      'No replacements on record — we take it the part has never been changed and count from zero. Add a service record and the figures become exact.',
     setLastChange: 'Set the last replacement',
     setLastChangeHint: 'This adds a back-dated service record — the count starts from it.',
     hide: 'Hide part',

@@ -13,7 +13,17 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { Pencil } from 'lucide-react-native';
-import { AppBar, AppText, BottomSheet, Card, Donut, Field, MonoText, PrimaryButton } from '../ui';
+import {
+  AppBar,
+  AppText,
+  Banner,
+  BottomSheet,
+  Card,
+  Donut,
+  Field,
+  MonoText,
+  PrimaryButton,
+} from '../ui';
 import type { TextTone } from '../ui';
 import { useColors } from '../theme/ThemeProvider';
 import { fonts, fontSize, layout, radius, sizes, spacing } from '../theme/tokens';
@@ -29,7 +39,7 @@ import {
   todayIso,
   updatePart,
 } from '../db/repositories';
-import { calculateResource, NO_DATA, type Resource } from '../domain/resource';
+import { baselineForCar, calculateResource, NO_DATA, type Resource } from '../domain/resource';
 import { effectiveMileage } from '../domain/validation';
 import type { Part } from '../domain/types';
 import { formatDate, formatNumber, parseNumberInput } from '../lib/format';
@@ -96,7 +106,7 @@ export default function PartDetailScreen() {
       ]);
       const mileage = effectiveMileage(car?.mileage ?? 0, records);
       const resource = car
-        ? calculateResource(part, lastChange, mileage, todayIso())
+        ? calculateResource(part, lastChange, mileage, todayIso(), baselineForCar(car))
         : NO_DATA;
       if (!cancelled) setData({ part, resource, history });
     })();
@@ -204,6 +214,11 @@ export default function PartDetailScreen() {
               ) : null}
             </View>
           </View>
+
+          {/* Числа настоящие, но посчитаны от начала жизни машины — об этом надо сказать. */}
+          {resource.assumed && resource.status !== 'no-data' ? (
+            <Banner tone="info" text={t('partDetail.assumedHint')} />
+          ) : null}
 
           <View style={styles.block}>
             <AppText variant="sectionLabel">{t('partDetail.name')}</AppText>
