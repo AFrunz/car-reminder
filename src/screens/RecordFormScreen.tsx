@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -71,6 +72,8 @@ interface PartEntry {
   /** Снимок категории детали: именно он уходит в разбивку расходов. */
   categoryKey: CategoryKey;
   cost: number | null;
+  /** Свободная пометка к позиции: модель, артикул, уточнение. Пусто — null. */
+  note: string | null;
 }
 
 interface ServiceEntry {
@@ -79,9 +82,11 @@ interface ServiceEntry {
   name: string;
   categoryKey: CategoryKey;
   cost: number | null;
+  /** Свободная пометка к позиции: модель, артикул, уточнение. Пусто — null. */
+  note: string | null;
 }
 
-/** Какая позиция сейчас редактируется в шторке цены. */
+/** Какая позиция сейчас редактируется в шторке цены и комментария. */
 type CostTarget = { type: 'part'; index: number } | { type: 'service'; index: number };
 
 let serviceKeySeed = 0;
@@ -206,6 +211,8 @@ function DateField({ label, value, onPress, style }: DateFieldProps) {
 interface ItemRowProps {
   name: string;
   category: string;
+  /** Комментарий позиции; null — строку не показываем. */
+  note: string | null;
   price: string;
   hasPrice: boolean;
   onPress: () => void;
@@ -213,9 +220,14 @@ interface ItemRowProps {
   removeLabel: string;
 }
 
+/**
+ * Комментарий идёт отдельной строкой под названием, категория остаётся ниже: так длинная
+ * пометка переносится по словам и не выдавливает категорию, нужную для разбивки расходов.
+ */
 function ItemRow({
   name,
   category,
+  note,
   price,
   hasPrice,
   onPress,
@@ -234,6 +246,12 @@ function ItemRow({
     >
       <View style={styles.itemText}>
         <AppText style={styles.itemName}>{name}</AppText>
+        {/* Пустая пометка из старых записей тоже не должна занимать строку */}
+        {note !== null && note.length > 0 ? (
+          <AppText tone="secondary" style={styles.itemNote} numberOfLines={2}>
+            {note}
+          </AppText>
+        ) : null}
         <AppText tone="tertiary" style={styles.itemCategory}>
           {category}
         </AppText>
@@ -332,6 +350,11 @@ export default function RecordFormScreen({ navigation, route }: Props) {
   const [partEntries, setPartEntries] = useState<PartEntry[]>([]);
   const [serviceEntries, setServiceEntries] = useState<ServiceEntry[]>([]);
   const [totalText, setTotalText] = useState('');
+  /**
+   * Сумму вписали руками — автосчёт выключен и значение принадлежит пользователю.
+   * У существующей записи сумма уже сохранена им, поэтому там признак истинен сразу.
+   */
+  const [totalEdited, setTotalEdited] = useState(false);
 
   /* Ошибки и предупреждения */
   const [errors, setErrors] = useState<ValidationError[]>([]);
@@ -349,9 +372,10 @@ export default function RecordFormScreen({ navigation, route }: Props) {
   const [serviceCategory, setServiceCategory] = useState<CategoryKey>('engine');
   const [serviceCost, setServiceCost] = useState('');
 
-  /* Шторка цены позиции */
+  /* Шторка цены и комментария позиции */
   const [costTarget, setCostTarget] = useState<CostTarget | null>(null);
   const [costText, setCostText] = useState('');
+  const [noteText, setNoteText] = useState('');
 
   /** Поля заполняются из записи ровно один раз — иначе перезагрузка затрёт правки. */
   const initialised = useRef(false);
@@ -380,6 +404,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
         setMileageText(formatNumber(record.mileage, language));
         setKind(record.kind);
         setTotalText(record.totalCost === null ? '' : formatNumber(record.totalCost, language));
+        setTotalEdited(true);
         const restoredParts: PartEntry[] = [];
         for (const item of record.items) {
           if (item.type !== 'part' || item.partId === null) continue;
@@ -387,6 +412,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
             partId: item.partId,
             categoryKey: item.categoryKey,
             cost: item.cost,
+            note: item.note,
           });
         }
         setPartEntries(restoredParts);
@@ -398,6 +424,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
               name: item.name ?? '',
               categoryKey: item.categoryKey,
               cost: item.cost,
+              note: item.note,
             })),
         );
       }
@@ -493,7 +520,12 @@ export default function RecordFormScreen({ navigation, route }: Props) {
       const keptIds = new Set(kept.map((entry) => entry.partId));
       const added: PartEntry[] = trackedParts
         .filter((part) => partsDraft.includes(part.id) && !keptIds.has(part.id))
-        .map((part) => ({ partId: part.id, categoryKey: part.categoryKey, cost: null }));
+        .map((part) => ({
+          partId: part.id,
+          categoryKey: part.categoryKey,
+          cost: null,
+          note: null,
+        }));
       return [...kept, ...added];
     });
     setPartsSheetOpen(false);
@@ -518,6 +550,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
         name,
         categoryKey: serviceCategory,
         cost: parseNumberInput(serviceCost),
+        note: null,
       },
     ]);
     setServiceSheetOpen(false);
@@ -531,53 +564,81 @@ export default function RecordFormScreen({ navigation, route }: Props) {
 
   const openCostSheet = useCallback(
     (target: CostTarget) => {
-      const cost =
-        target.type === 'part'
-          ? (partEntries[target.index]?.cost ?? null)
-          : (serviceEntries[target.index]?.cost ?? null);
+      const entry =
+        target.type === 'part' ? partEntries[target.index] : serviceEntries[target.index];
+      const cost = entry?.cost ?? null;
       setCostText(cost === null ? '' : formatNumber(cost, language));
+      setNoteText(entry?.note ?? '');
       setCostTarget(target);
     },
     [language, partEntries, serviceEntries],
   );
 
+  /** Комментарий необязателен: пустая строка (и одни пробелы) сохраняется как null. */
   const applyCost = useCallback(() => {
     if (!costTarget) return;
     const cost = parseNumberInput(costText);
+    const trimmed = noteText.trim();
+    const note = trimmed.length === 0 ? null : trimmed;
     dropWarning();
     if (costTarget.type === 'part') {
       setPartEntries((current) =>
-        current.map((entry, i) => (i === costTarget.index ? { ...entry, cost } : entry)),
+        current.map((entry, i) => (i === costTarget.index ? { ...entry, cost, note } : entry)),
       );
     } else {
       setServiceEntries((current) =>
-        current.map((entry, i) => (i === costTarget.index ? { ...entry, cost } : entry)),
+        current.map((entry, i) => (i === costTarget.index ? { ...entry, cost, note } : entry)),
       );
     }
     setCostTarget(null);
-  }, [costTarget, costText, dropWarning]);
+  }, [costTarget, costText, dropWarning, noteText]);
 
   /* ── Вычисление суммы ─────────────────────────────────────────────────── */
 
   /**
-   * Позиции без цены считаются нулём, поэтому итог заведомо занижен — под полем
-   * появляется предупреждение с их перечислением. Значение остаётся обычным
-   * содержимым поля: пользователь волен его исправить, и сохранится именно оно.
+   * Сумма позиций и названия тех, у кого цены нет: позиции без цены считаются нулём,
+   * поэтому итог заведомо занижен — под полем появляется предупреждение с их перечислением.
+   * `hasPriced` отделяет настоящий ноль от «цену вообще не указывали»: пока ни одной цены
+   * нет, считать нечего и подставлять в поле нечего.
    */
-  const calculate = useCallback(() => {
+  const itemsTotal = useMemo(() => {
     let sum = 0;
+    let priced = 0;
     const missing: string[] = [];
     for (const entry of partEntries) {
       if (entry.cost === null) missing.push(partTitleById(entry.partId));
-      else sum += entry.cost;
+      else {
+        sum += entry.cost;
+        priced += 1;
+      }
     }
     for (const entry of serviceEntries) {
       if (entry.cost === null) missing.push(entry.name);
-      else sum += entry.cost;
+      else {
+        sum += entry.cost;
+        priced += 1;
+      }
     }
-    setTotalText(formatNumber(sum, language));
-    setZeroPriced(missing);
-  }, [language, partEntries, partTitleById, serviceEntries]);
+    return { sum, missing, hasPriced: priced > 0 };
+  }, [partEntries, partTitleById, serviceEntries]);
+
+  /** Подставить сумму позиций в поле. Значение остаётся обычным содержимым поля. */
+  const syncTotal = useCallback(() => {
+    setTotalText(itemsTotal.hasPriced ? formatNumber(itemsTotal.sum, language) : '');
+    setZeroPriced(itemsTotal.hasPriced ? itemsTotal.missing : []);
+  }, [itemsTotal, language]);
+
+  /** Пока сумму не трогали руками, поле идёт за позициями — как «Вычислить» после каждой правки. */
+  useEffect(() => {
+    if (totalEdited) return;
+    syncTotal();
+  }, [syncTotal, totalEdited]);
+
+  /** Кнопка нужна после ручной правки: считает и снова отдаёт поле автосчёту. */
+  const calculate = useCallback(() => {
+    syncTotal();
+    setTotalEdited(false);
+  }, [syncTotal]);
 
   /* ── Сохранение ───────────────────────────────────────────────────────── */
 
@@ -599,6 +660,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
         name: null,
         categoryKey: entry.categoryKey,
         cost: entry.cost,
+        note: entry.note,
       })),
       ...serviceEntries.map<NewServiceItem>((entry) => ({
         type: 'service',
@@ -606,8 +668,13 @@ export default function RecordFormScreen({ navigation, route }: Props) {
         name: entry.name,
         categoryKey: entry.categoryKey,
         cost: entry.cost,
+        note: entry.note,
       })),
     ];
+
+    // Поле пустое — уходит сумма позиций; но если ни одной цены нет, это не нулевой чек, а null.
+    const typedTotal = parseNumberInput(totalText);
+    const totalCost = typedTotal ?? (itemsTotal.hasPriced ? itemsTotal.sum : null);
 
     void (async () => {
       await saveRecord(
@@ -616,7 +683,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
           date: dateIso,
           mileage,
           kind,
-          totalCost: parseNumberInput(totalText),
+          totalCost,
           items,
         },
         recordId,
@@ -628,6 +695,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
     carId,
     dateIso,
     existingRecords,
+    itemsTotal,
     kind,
     loaded,
     mileageText,
@@ -666,122 +734,135 @@ export default function RecordFormScreen({ navigation, route }: Props) {
     return messages;
   }, [errors, language, t]);
 
+  /**
+   * Обёртка над содержимым снимает фокус тапом по пустому месту: `handled` пропускает
+   * нажатия по полям, кнопкам и строкам позиций к ним самим, а всё остальное доходит
+   * до обёртки и убирает клавиатуру. `flexGrow` растягивает её на весь экран, чтобы
+   * пустота под последней секцией тоже была кликабельной.
+   */
   const content = (
-    <ScrollView
-      contentContainerStyle={[styles.content, { paddingBottom: sizes.screenPadding + insets.bottom }]}
-      keyboardShouldPersistTaps="handled"
-    >
-      <View style={styles.fieldsRow}>
-        <DateField
-          label={t('recordForm.date')}
-          value={formatShortDate(dateIso, language)}
-          onPress={() => setDatePickerOpen(true)}
-          style={styles.flexField}
-        />
-        <Field
-          label={t('recordForm.mileage')}
-          value={mileageText}
-          onChangeText={(value) => {
-            const parsed = parseNumberInput(value);
-            setMileageText(parsed === null ? '' : formatNumber(parsed, language));
-          }}
-          keyboardType="number-pad"
-          suffix={t('units.km')}
-          placeholder={activeCar ? formatNumber(activeCar.mileage, language) : ''}
-          mono
-          style={styles.flexField}
-        />
-      </View>
-
-      {errorMessages.map((message, index) => (
-        <Banner key={`${index}-${message}`} tone="warning" text={message} />
-      ))}
-
-      <View style={styles.section}>
-        <SectionHeader title={t('recordForm.kind')} />
-        <SegmentedControl options={kindOptions} value={kind} onChange={setKind} />
-      </View>
-
-      <View style={styles.section}>
-        <SectionHeader title={t('recordForm.parts')} />
-        {partEntries.length === 0 ? (
-          <AppText variant="caption" tone="tertiary">
-            {t('recordForm.noParts')}
-          </AppText>
-        ) : null}
-        {partEntries.map((entry, index) => (
-          <ItemRow
-            key={`${entry.partId}-${index}`}
-            name={partTitleById(entry.partId)}
-            category={t(`category.${entry.categoryKey}`)}
-            price={entry.cost === null ? t('common.dash') : formatNumber(entry.cost, language)}
-            hasPrice={entry.cost !== null}
-            onPress={() => openCostSheet({ type: 'part', index })}
-            onRemove={() => removePart(index)}
-            removeLabel={t('common.delete')}
+    <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+      <Pressable
+        accessible={false}
+        onPress={Keyboard.dismiss}
+        style={[styles.content, { paddingBottom: sizes.screenPadding + insets.bottom }]}
+      >
+        <View style={styles.fieldsRow}>
+          <DateField
+            label={t('recordForm.date')}
+            value={formatShortDate(dateIso, language)}
+            onPress={() => setDatePickerOpen(true)}
+            style={styles.flexField}
           />
-        ))}
-        <OutlineButton
-          title={t('recordForm.addPart')}
-          icon={Plus}
-          fullWidth
-          onPress={openPartsSheet}
-          style={styles.addButton}
-        />
-      </View>
-
-      <View style={styles.section}>
-        <SectionHeader title={t('recordForm.services')} />
-        {serviceEntries.length === 0 ? (
-          <AppText variant="caption" tone="tertiary">
-            {t('recordForm.noServices')}
-          </AppText>
-        ) : null}
-        {serviceEntries.map((entry, index) => (
-          <ItemRow
-            key={entry.key}
-            name={entry.name}
-            category={t(`category.${entry.categoryKey}`)}
-            price={entry.cost === null ? t('common.dash') : formatNumber(entry.cost, language)}
-            hasPrice={entry.cost !== null}
-            onPress={() => openCostSheet({ type: 'service', index })}
-            onRemove={() => removeService(index)}
-            removeLabel={t('common.delete')}
-          />
-        ))}
-        <OutlineButton
-          title={t('recordForm.addService')}
-          icon={Plus}
-          fullWidth
-          onPress={openServiceSheet}
-          style={styles.addButton}
-        />
-      </View>
-
-      <View style={styles.section}>
-        <SectionHeader title={t('recordForm.cost')} />
-        <View style={styles.amountRow}>
-          <AmountField
-            value={totalText}
+          <Field
+            label={t('recordForm.mileage')}
+            value={mileageText}
             onChangeText={(value) => {
               const parsed = parseNumberInput(value);
-              setTotalText(parsed === null ? '' : formatNumber(parsed, language));
+              setMileageText(parsed === null ? '' : formatNumber(parsed, language));
             }}
-            caption={t('recordForm.total')}
-            placeholder={t('common.dash')}
+            keyboardType="number-pad"
+            suffix={t('units.km')}
+            placeholder={activeCar ? formatNumber(activeCar.mileage, language) : ''}
+            mono
+            style={styles.flexField}
           />
-          <CalcButton label={t('common.calculate')} onPress={calculate} />
         </View>
-        {zeroPriced.length > 0 ? (
-          <Banner
-            tone="warning"
-            text={t('recordForm.noPriceWarning', {
-              count: zeroPriced.length,
-              list: zeroPriced.join('», «'),
-            })}
+
+        {errorMessages.map((message, index) => (
+          <Banner key={`${index}-${message}`} tone="warning" text={message} />
+        ))}
+
+        <View style={styles.section}>
+          <SectionHeader title={t('recordForm.kind')} />
+          <SegmentedControl options={kindOptions} value={kind} onChange={setKind} />
+        </View>
+
+        <View style={styles.section}>
+          <SectionHeader title={t('recordForm.parts')} />
+          {partEntries.length === 0 ? (
+            <AppText variant="caption" tone="tertiary">
+              {t('recordForm.noParts')}
+            </AppText>
+          ) : null}
+          {partEntries.map((entry, index) => (
+            <ItemRow
+              key={`${entry.partId}-${index}`}
+              name={partTitleById(entry.partId)}
+              category={t(`category.${entry.categoryKey}`)}
+              note={entry.note}
+              price={entry.cost === null ? t('common.dash') : formatNumber(entry.cost, language)}
+              hasPrice={entry.cost !== null}
+              onPress={() => openCostSheet({ type: 'part', index })}
+              onRemove={() => removePart(index)}
+              removeLabel={t('common.delete')}
+            />
+          ))}
+          <OutlineButton
+            title={t('recordForm.addPart')}
+            icon={Plus}
+            fullWidth
+            onPress={openPartsSheet}
+            style={styles.addButton}
           />
-        ) : null}
-      </View>
+        </View>
+
+        <View style={styles.section}>
+          <SectionHeader title={t('recordForm.services')} />
+          {serviceEntries.length === 0 ? (
+            <AppText variant="caption" tone="tertiary">
+              {t('recordForm.noServices')}
+            </AppText>
+          ) : null}
+          {serviceEntries.map((entry, index) => (
+            <ItemRow
+              key={entry.key}
+              name={entry.name}
+              category={t(`category.${entry.categoryKey}`)}
+              note={entry.note}
+              price={entry.cost === null ? t('common.dash') : formatNumber(entry.cost, language)}
+              hasPrice={entry.cost !== null}
+              onPress={() => openCostSheet({ type: 'service', index })}
+              onRemove={() => removeService(index)}
+              removeLabel={t('common.delete')}
+            />
+          ))}
+          <OutlineButton
+            title={t('recordForm.addService')}
+            icon={Plus}
+            fullWidth
+            onPress={openServiceSheet}
+            style={styles.addButton}
+          />
+        </View>
+
+        <View style={styles.section}>
+          <SectionHeader title={t('recordForm.cost')} />
+          <View style={styles.amountRow}>
+            <AmountField
+              value={totalText}
+              onChangeText={(value) => {
+                const parsed = parseNumberInput(value);
+                // Любой ввод, включая стирание, отдаёт поле пользователю и гасит автосчёт.
+                setTotalEdited(true);
+                setTotalText(parsed === null ? '' : formatNumber(parsed, language));
+              }}
+              caption={t('recordForm.total')}
+              placeholder={t('common.dash')}
+            />
+            <CalcButton label={t('common.calculate')} onPress={calculate} />
+          </View>
+          {zeroPriced.length > 0 ? (
+            <Banner
+              tone="warning"
+              text={t('recordForm.noPriceWarning', {
+                count: zeroPriced.length,
+                list: zeroPriced.join('», «'),
+              })}
+            />
+          ) : null}
+        </View>
+      </Pressable>
     </ScrollView>
   );
 
@@ -959,28 +1040,41 @@ export default function RecordFormScreen({ navigation, route }: Props) {
         )}
       </BottomSheet>
 
-      {/* Шторка цены позиции */}
+      {/* Шторка цены и комментария позиции */}
       <BottomSheet
         visible={costTarget !== null}
         onClose={() => setCostTarget(null)}
         title={t('recordForm.editItemCost')}
         footer={<PrimaryButton fullWidth title={t('common.done')} onPress={applyCost} />}
       >
-        <View style={[styles.sheetPadded, styles.hintGroup]}>
-          <Field
-            label={t('recordForm.itemCost')}
-            value={costText}
-            onChangeText={(value) => {
-              const parsed = parseNumberInput(value);
-              setCostText(parsed === null ? '' : formatNumber(parsed, language));
-            }}
-            keyboardType="number-pad"
-            placeholder={t('common.dash')}
-            mono
-          />
-          <AppText variant="label" tone="tertiary">
-            {t('common.optional')}
-          </AppText>
+        <View style={[styles.sheetPadded, styles.sheetFields]}>
+          <View style={styles.hintGroup}>
+            <Field
+              label={t('recordForm.itemCost')}
+              value={costText}
+              onChangeText={(value) => {
+                const parsed = parseNumberInput(value);
+                setCostText(parsed === null ? '' : formatNumber(parsed, language));
+              }}
+              keyboardType="number-pad"
+              placeholder={t('common.dash')}
+              mono
+            />
+            <AppText variant="label" tone="tertiary">
+              {t('common.optional')}
+            </AppText>
+          </View>
+          <View style={styles.hintGroup}>
+            <Field
+              label={t('recordForm.itemNote')}
+              value={noteText}
+              onChangeText={setNoteText}
+              placeholder={t('recordForm.itemNotePlaceholder')}
+            />
+            <AppText variant="label" tone="tertiary">
+              {t('common.optional')}
+            </AppText>
+          </View>
         </View>
       </BottomSheet>
     </View>
@@ -994,7 +1088,11 @@ const styles = StyleSheet.create({
   flex: {
     flex: 1,
   },
+  scrollContent: {
+    flexGrow: 1,
+  },
   content: {
+    flexGrow: 1,
     gap: spacing.md + 2,
     paddingHorizontal: sizes.screenPadding,
     paddingTop: spacing.sm,
@@ -1051,6 +1149,11 @@ const styles = StyleSheet.create({
   },
   itemCategory: {
     fontSize: 11.5,
+  },
+  /** Комментарий переносится по словам, лишнее уходит в многоточие в конце второй строки. */
+  itemNote: {
+    fontSize: 12.5,
+    lineHeight: 12.5 * lineHeight.relaxed,
   },
   itemRight: {
     alignItems: 'center',
@@ -1159,6 +1262,9 @@ const styles = StyleSheet.create({
   },
   hintGroup: {
     gap: spacing.s,
+  },
+  sheetFields: {
+    gap: spacing.md + 2,
   },
   hint: {
     fontSize: 11.5,

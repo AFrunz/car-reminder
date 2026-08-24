@@ -1,6 +1,6 @@
 import type { SQLiteBindValue } from 'expo-sqlite';
 import { getDatabase, createId, todayIso } from './database';
-import { CATALOG_BY_FREQUENCY, isApplicable } from '../data/catalog';
+import { CATALOG_BY_FREQUENCY, hasInterval, isApplicable } from '../data/catalog';
 import type {
   Car,
   CategoryKey,
@@ -102,7 +102,7 @@ export async function createCar(input: NewCar): Promise<Car> {
         entry.category,
         entry.intervalKm,
         entry.intervalMonths,
-        isApplicable(entry, input.fuel, input.transmission) ? 1 : 0,
+        isApplicable(entry, input.fuel, input.transmission) && hasInterval(entry) ? 1 : 0,
         i,
       );
     }
@@ -202,13 +202,14 @@ export async function createCustomPart(input: NewPart): Promise<Part> {
   await db.runAsync(
     `INSERT INTO parts (id, car_id, catalog_key, name, category_key,
       interval_km, interval_months, tracked, custom, sort_order)
-     VALUES (?, ?, NULL, ?, ?, ?, ?, 1, 1, ?)`,
+     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 1, ?)`,
     id,
     input.carId,
     input.name,
     input.categoryKey,
     input.intervalKm,
     input.intervalMonths,
+    hasInterval(input) ? 1 : 0,
     row?.next ?? 0,
   );
   return (await getPart(id))!;
@@ -292,11 +293,11 @@ export async function lastChangesForCar(carId: string): Promise<Record<string, L
 
 /** История замен конкретной детали, от свежих к старым. */
 export async function historyForPart(partId: string): Promise<
-  Array<{ recordId: string; mileage: number; date: string; cost: number | null }>
+  Array<{ recordId: string; mileage: number; date: string; cost: number | null; note: string | null }>
 > {
   const db = await getDatabase();
   return db.getAllAsync(
-    `SELECT r.id AS recordId, r.mileage AS mileage, r.date AS date, i.cost AS cost
+    `SELECT r.id AS recordId, r.mileage AS mileage, r.date AS date, i.cost AS cost, i.note AS note
      FROM service_items i JOIN service_records r ON r.id = i.record_id
      WHERE i.part_id = ? ORDER BY r.mileage DESC`,
     partId,
@@ -333,6 +334,7 @@ interface ItemRow {
   name: string | null;
   category_key: string;
   cost: number | null;
+  note: string | null;
 }
 
 const toItem = (r: ItemRow): ServiceItem => ({
@@ -343,6 +345,7 @@ const toItem = (r: ItemRow): ServiceItem => ({
   name: r.name,
   categoryKey: r.category_key as CategoryKey,
   cost: r.cost,
+  note: r.note,
 });
 
 export async function listRecords(carId: string): Promise<ServiceRecord[]> {
@@ -390,6 +393,8 @@ export interface NewServiceItem {
   name: string | null;
   categoryKey: CategoryKey;
   cost: number | null;
+  /** Свободная пометка: модель, артикул, что угодно. */
+  note: string | null;
 }
 
 export interface NewServiceRecord {
@@ -430,8 +435,8 @@ export async function saveRecord(input: NewServiceRecord, id?: string): Promise<
     }
     for (const item of input.items) {
       await db.runAsync(
-        `INSERT INTO service_items (id, record_id, type, part_id, name, category_key, cost)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO service_items (id, record_id, type, part_id, name, category_key, cost, note)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         createId(),
         recordId,
         item.type,
@@ -439,6 +444,7 @@ export async function saveRecord(input: NewServiceRecord, id?: string): Promise<
         item.name,
         item.categoryKey,
         item.cost,
+        item.note,
       );
     }
   });

@@ -26,7 +26,16 @@ import {
 } from '../ui';
 import type { TextTone } from '../ui';
 import { useColors } from '../theme/ThemeProvider';
-import { fonts, fontSize, layout, radius, sizes, spacing } from '../theme/tokens';
+import {
+  fonts,
+  fontSize,
+  layout,
+  lineHeight,
+  radius,
+  sizes,
+  spacing,
+  typography,
+} from '../theme/tokens';
 import type { RootStackParamList } from '../navigation/types';
 import { useGarage } from '../state/GarageContext';
 import {
@@ -56,6 +65,8 @@ interface HistoryEntry {
   mileage: number;
   date: string;
   cost: number | null;
+  /** Свободная пометка из позиции записи ТО: модель, артикул, что угодно. */
+  note: string | null;
 }
 
 /** Всё, что экран читает из базы за один проход, — чтобы не мигать полупустым состоянием. */
@@ -88,7 +99,6 @@ export default function PartDetailScreen() {
   const [intervalSheetOpen, setIntervalSheetOpen] = useState(false);
   const [kmDraft, setKmDraft] = useState('');
   const [monthsDraft, setMonthsDraft] = useState('');
-  const [intervalError, setIntervalError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,24 +158,20 @@ export default function PartDetailScreen() {
   const openIntervalSheet = useCallback(() => {
     setKmDraft(part?.intervalKm == null ? '' : String(part.intervalKm));
     setMonthsDraft(part?.intervalMonths == null ? '' : String(part.intervalMonths));
-    setIntervalError(null);
     setIntervalSheetOpen(true);
   }, [part]);
 
   const saveIntervals = useCallback(() => {
+    // Оба поля можно очистить: деталь, которую меняют по состоянию, живёт без интервалов —
+    // ресурс у неё просто станет «нет данных».
     const intervalKm = parseNumberInput(kmDraft);
     const intervalMonths = parseNumberInput(monthsDraft);
-    // Хотя бы один интервал обязателен: без него ресурс просто не из чего считать.
-    if (intervalKm === null && intervalMonths === null) {
-      setIntervalError(t('partDetail.intervalRequired'));
-      return;
-    }
     void (async () => {
       await updatePart(partId, { intervalKm, intervalMonths });
       setIntervalSheetOpen(false);
       refresh();
     })();
-  }, [kmDraft, monthsDraft, partId, refresh, t]);
+  }, [kmDraft, monthsDraft, partId, refresh]);
 
   const confirmHide = useCallback(() => {
     Alert.alert(t('partDetail.hideConfirm', { name: partName }), t('partDetail.hideWarning'), [
@@ -245,7 +251,7 @@ export default function PartDetailScreen() {
                   ? null
                   : t('units.kmValue', { value: formatNumber(part.intervalKm, language) })
               }
-              empty={t('partDetail.intervalNotSet')}
+              empty={t('common.dash')}
               onPress={openIntervalSheet}
             />
             <IntervalTile
@@ -255,7 +261,7 @@ export default function PartDetailScreen() {
                   ? null
                   : t('units.monthsValue', { value: part.intervalMonths })
               }
-              empty={t('partDetail.intervalNotSet')}
+              empty={t('common.dash')}
               onPress={openIntervalSheet}
             />
           </View>
@@ -280,6 +286,17 @@ export default function PartDetailScreen() {
                       <AppText variant="label" tone="secondary">
                         {formatDate(entry.date, language)}
                       </AppText>
+                      {/* Пометка к позиции — модель, артикул; пустую строку не показываем. */}
+                      {entry.note?.trim() ? (
+                        <AppText
+                          variant="label"
+                          tone="tertiary"
+                          numberOfLines={2}
+                          style={styles.historyNote}
+                        >
+                          {entry.note.trim()}
+                        </AppText>
+                      ) : null}
                       {index === 0 ? (
                         <AppText tone="accent" style={styles.lastChange}>
                           {t('partDetail.lastChange')}
@@ -347,10 +364,7 @@ export default function PartDetailScreen() {
               style={styles.flex}
               label={t('partForm.byMileage')}
               value={kmDraft}
-              onChangeText={(value) => {
-                setKmDraft(value);
-                setIntervalError(null);
-              }}
+              onChangeText={setKmDraft}
               suffix={t('units.km')}
               keyboardType="number-pad"
               mono
@@ -359,20 +373,12 @@ export default function PartDetailScreen() {
               style={styles.flex}
               label={t('partForm.byTime')}
               value={monthsDraft}
-              onChangeText={(value) => {
-                setMonthsDraft(value);
-                setIntervalError(null);
-              }}
+              onChangeText={setMonthsDraft}
               suffix={t('units.months')}
               keyboardType="number-pad"
               mono
             />
           </View>
-          {intervalError ? (
-            <AppText variant="caption" tone="danger">
-              {intervalError}
-            </AppText>
-          ) : null}
         </View>
       </BottomSheet>
     </View>
@@ -383,6 +389,7 @@ interface IntervalTileProps {
   label: string;
   /** null — интервал по этой шкале не задан. */
   value: string | null;
+  /** Чем заменить число, когда интервала нет, — прочерк. */
   empty: string;
   onPress: () => void;
 }
@@ -404,15 +411,13 @@ function IntervalTile({ label, value, empty, onPress }: IntervalTileProps) {
         </AppText>
         <Pencil size={sizes.iconXs} color={colors.textTertiary} />
       </View>
-      {value === null ? (
-        <AppText tone="tertiary" style={styles.tileValue}>
-          {empty}
-        </AppText>
-      ) : (
-        <MonoText weight="semibold" size={TILE_VALUE_SIZE}>
-          {value}
-        </MonoText>
-      )}
+      <MonoText
+        weight="semibold"
+        size={TILE_VALUE_SIZE}
+        tone={value === null ? 'tertiary' : 'primary'}
+      >
+        {value ?? empty}
+      </MonoText>
     </Pressable>
   );
 }
@@ -552,9 +557,6 @@ const styles = StyleSheet.create({
     gap: spacing.s,
     justifyContent: 'space-between',
   },
-  tileValue: {
-    fontSize: fontSize.fieldValue,
-  },
   emptyCard: {
     gap: spacing.s,
   },
@@ -569,6 +571,10 @@ const styles = StyleSheet.create({
   historyLeft: {
     flex: 1,
     gap: spacing.xxs,
+  },
+  /** Комментарий переносится — без собственного межстрочного он слипается. */
+  historyNote: {
+    lineHeight: typography.label.fontSize * lineHeight.relaxed,
   },
   lastChange: {
     fontFamily: fonts.uiSemibold,

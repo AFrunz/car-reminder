@@ -42,13 +42,14 @@ export interface LastChange {
   date: string;
 }
 
+/** Считать нечем: у детали не задан ни один интервал, значит нет ни шкалы, ни отсчёта. */
 export const NO_DATA: Resource = {
   status: 'no-data',
   value: null,
   kmLeft: null,
   monthsLeft: null,
   basis: null,
-  assumed: true,
+  assumed: false,
 };
 
 /**

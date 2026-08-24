@@ -1,6 +1,63 @@
 import * as SQLite from 'expo-sqlite';
-import { CATALOG_BY_FREQUENCY, isApplicable } from '../data/catalog';
+import { CATALOG_BY_FREQUENCY, hasInterval, isApplicable } from '../data/catalog';
 import type { FuelType, Transmission } from '../domain/types';
+
+interface CarRowForSync {
+  id: string;
+  fuel: string;
+  transmission: string;
+}
+
+/**
+ * Приводит набор деталей машины к текущему каталогу: недостающие позиции заводит,
+ * существующим обновляет порядок. Вызывается из миграций — каталог пополняется с
+ * версиями приложения, и уже заведённые машины должны получать новые позиции.
+ *
+ * Деталь без единого интервала заводится выключенной: ресурс у неё посчитать нечем,
+ * в списке отслеживания ей делать нечего, но в каталоге она доступна для включения.
+ */
+async function syncCatalogForCar(db: SQLite.SQLiteDatabase, car: CarRowForSync): Promise<void> {
+  const existing = await db.getAllAsync<{ catalog_key: string | null }>(
+    'SELECT catalog_key FROM parts WHERE car_id = ?',
+    car.id,
+  );
+  const known = new Set(existing.map((row) => row.catalog_key).filter(Boolean));
+
+  for (let i = 0; i < CATALOG_BY_FREQUENCY.length; i += 1) {
+    const entry = CATALOG_BY_FREQUENCY[i];
+    if (known.has(entry.key)) {
+      await db.runAsync(
+        'UPDATE parts SET sort_order = ? WHERE car_id = ? AND catalog_key = ?',
+        i,
+        car.id,
+        entry.key,
+      );
+      continue;
+    }
+    const tracked =
+      isApplicable(entry, car.fuel as FuelType, car.transmission as Transmission) &&
+      hasInterval(entry);
+    await db.runAsync(
+      `INSERT INTO parts (id, car_id, catalog_key, name, category_key,
+        interval_km, interval_months, tracked, custom, sort_order)
+       VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, ?)`,
+      `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+      car.id,
+      entry.key,
+      entry.category,
+      entry.intervalKm,
+      entry.intervalMonths,
+      tracked ? 1 : 0,
+      i,
+    );
+  }
+  // Свои детали остаются в конце списка, сохраняя относительный порядок.
+  await db.runAsync(
+    'UPDATE parts SET sort_order = sort_order + ? WHERE car_id = ? AND catalog_key IS NULL',
+    CATALOG_BY_FREQUENCY.length,
+    car.id,
+  );
+}
 
 export const DATABASE_NAME = 'car-reminder.db';
 
@@ -78,48 +135,18 @@ const MIGRATIONS: Migration[] = [
    * список остался бы в исходном порядке и без новых деталей.
    */
   async (db) => {
-    const cars = await db.getAllAsync<{ id: string; fuel: string; transmission: string }>(
-      'SELECT id, fuel, transmission FROM cars',
-    );
-    for (const car of cars) {
-      const existing = await db.getAllAsync<{ catalog_key: string | null }>(
-        'SELECT catalog_key FROM parts WHERE car_id = ?',
-        car.id,
-      );
-      const known = new Set(existing.map((row) => row.catalog_key).filter(Boolean));
+    const cars = await db.getAllAsync<CarRowForSync>('SELECT id, fuel, transmission FROM cars');
+    for (const car of cars) await syncCatalogForCar(db, car);
+  },
 
-      for (let i = 0; i < CATALOG_BY_FREQUENCY.length; i += 1) {
-        const entry = CATALOG_BY_FREQUENCY[i];
-        if (known.has(entry.key)) {
-          await db.runAsync(
-            'UPDATE parts SET sort_order = ? WHERE car_id = ? AND catalog_key = ?',
-            i,
-            car.id,
-            entry.key,
-          );
-        } else {
-          await db.runAsync(
-            `INSERT INTO parts (id, car_id, catalog_key, name, category_key,
-              interval_km, interval_months, tracked, custom, sort_order)
-             VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, ?)`,
-            `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
-            car.id,
-            entry.key,
-            entry.category,
-            entry.intervalKm,
-            entry.intervalMonths,
-            isApplicable(entry, car.fuel as FuelType, car.transmission as Transmission) ? 1 : 0,
-            i,
-          );
-        }
-      }
-      // Свои детали остаются в конце списка, сохраняя относительный порядок.
-      await db.runAsync(
-        'UPDATE parts SET sort_order = sort_order + ? WHERE car_id = ? AND catalog_key IS NULL',
-        CATALOG_BY_FREQUENCY.length,
-        car.id,
-      );
-    }
+  /**
+   * У позиции ТО появился свободный комментарий — модель, артикул, любая пометка.
+   * Заодно догоняем каталог: в нём появилась смазка суппортов, деталь без интервалов.
+   */
+  async (db) => {
+    await db.execAsync('ALTER TABLE service_items ADD COLUMN note TEXT');
+    const cars = await db.getAllAsync<CarRowForSync>('SELECT id, fuel, transmission FROM cars');
+    for (const car of cars) await syncCatalogForCar(db, car);
   },
 ];
 

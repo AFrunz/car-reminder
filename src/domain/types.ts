@@ -76,6 +76,8 @@ export interface ServiceItem {
   name: string | null;
   categoryKey: CategoryKey;
   cost: number | null;
+  /** Свободная пометка к позиции: модель, артикул, что угодно. */
+  note: string | null;
 }
 
 export interface ServiceRecordWithItems extends ServiceRecord {

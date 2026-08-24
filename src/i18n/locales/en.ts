@@ -55,6 +55,7 @@ const en: Translations = {
     'rear-brake-discs': 'Rear brake discs',
     'brake-fluid': 'Brake fluid',
     'brake-hoses': 'Brake hoses',
+    'caliper-grease': 'Caliper grease',
     'parking-brake-shoes': 'Parking brake shoes',
 
     // Suspension & steering
@@ -111,7 +112,6 @@ const en: Translations = {
     'tire-fitting': 'Tyre fitting',
     balancing: 'Wheel balancing',
     'car-wash': 'Car wash',
-    'throttle-cleaning': 'Throttle body cleaning',
     'ac-recharge': 'A/C recharge',
 
     currentMileage: 'Current mileage',
@@ -213,6 +213,8 @@ const en: Translations = {
     byTime: 'By time',
     intervalHint:
       'One interval is enough. Set the time interval alone and the remaining-life ring is counted by time, not by mileage.',
+    noIntervalHint:
+      'You can leave the interval empty — some parts are replaced by condition, not by schedule. Such a part goes to the catalogue switched off, because there is nothing to measure. Turn it on whenever you like.',
     changesHint:
       'The mileage and date of the last replacement are taken from service records. Until there is one, the part is marked “no data”.',
     submit: 'Add part',
@@ -272,6 +274,8 @@ const en: Translations = {
     categoryHint: 'Decides which category the cost of this service lands in under Expenses.',
     commonServices: 'Common services',
     itemCost: 'Cost',
+    itemNote: 'Comment',
+    itemNotePlaceholder: 'Model, part number, a note',
     editItemCost: 'Item cost',
     delete: 'Delete record',
     deleteConfirm: 'Delete this service record?',

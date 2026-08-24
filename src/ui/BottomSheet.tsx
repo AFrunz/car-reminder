@@ -65,10 +65,26 @@ export function BottomSheet({
   const awaitingLayoutRef = useRef(false);
   const dragStartRef = useRef(0);
 
+  /**
+   * Реальная зона под клавиатурой, считая от низа окна модалки.
+   * Android присылает высоту клавиатуры уже без системной навигации (ReactRootView:
+   * `imeInsets.bottom - barInsets.bottom`), а окно модалки идёт под навигацию —
+   * поэтому её инсет возвращаем обратно, иначе подъёма не хватает ровно на панель навигации.
+   */
+  const keyboardOverlap =
+    keyboardHeight > 0 ? keyboardHeight + (Platform.OS === 'android' ? insets.bottom : 0) : 0;
   /** Клавиатура перекрывает системную навигацию, поэтому отступы не складываются. */
-  const keyboardPad = Math.max(keyboardHeight, insets.bottom);
-  const maxSheetHeight =
-    (containerHeight > 0 ? containerHeight : windowHeight) * layout.sheet.maxHeightRatio;
+  const keyboardPad = Math.max(keyboardOverlap, insets.bottom);
+  const availableHeight = containerHeight > 0 ? containerHeight : windowHeight;
+  /**
+   * Доля считается от видимой части экрана: зона под клавиатурой в неё не входит, но
+   * остаётся внутри панели как нижний паддинг — иначе низ вместе с footer уходит под клавиатуру.
+   * Верхний предел — высота контейнера: выше границы экрана панель не уезжает.
+   */
+  const maxSheetHeight = Math.min(
+    availableHeight,
+    Math.max(0, availableHeight - keyboardOverlap) * layout.sheet.maxHeightRatio + keyboardOverlap,
+  );
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -160,6 +176,15 @@ export function BottomSheet({
     [animateOpen, translateY],
   );
 
+  /**
+   * Тап мимо поля ввода снимает фокус и убирает клавиатуру.
+   * Свои Pressable и TextInput внутри содержимого перехватывают жест раньше обёртки,
+   * поэтому их нажатия продолжают работать — сюда доходят только тапы по пустому месту.
+   */
+  const dismissKeyboard = useCallback(() => {
+    Keyboard.dismiss();
+  }, []);
+
   const panResponder = useMemo(
     () =>
       PanResponder.create({
@@ -248,9 +273,13 @@ export function BottomSheet({
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
-              {children}
+              {/* accessible={false}: обёртка нужна только ради жеста и не должна склеивать содержимое для скринридера. */}
+              <Pressable accessible={false} onPress={dismissKeyboard}>
+                {children}
+              </Pressable>
             </ScrollView>
           ) : null}
+          {/* footer прижат к низу панели поверх прокрутки: он сосед ScrollView, а не её содержимое. */}
           {footer ? <View style={styles.footer}>{footer}</View> : null}
         </Animated.View>
       </View>

@@ -63,6 +63,9 @@ export const CATALOG: CatalogEntry[] = [
   { key: 'rear-brake-discs', category: 'brakes', intervalKm: 90_000, intervalMonths: null },
   { key: 'brake-fluid', category: 'brakes', intervalKm: 60_000, intervalMonths: 24 },
   { key: 'brake-hoses', category: 'brakes', intervalKm: 120_000, intervalMonths: 96 },
+  // Смазка направляющих суппорта делается «по состоянию», регулярного срока у неё нет:
+  // заводим без интервалов, поэтому в списке отслеживания она по умолчанию выключена.
+  { key: 'caliper-grease', category: 'brakes', intervalKm: null, intervalMonths: null },
   { key: 'parking-brake-shoes', category: 'brakes', intervalKm: 100_000, intervalMonths: null },
 
   // Подвеска и рулевое
@@ -94,6 +97,15 @@ export const CATALOG: CatalogEntry[] = [
   { key: 'summer-tires', category: 'wheels', intervalKm: 50_000, intervalMonths: 72 },
   { key: 'winter-tires', category: 'wheels', intervalKm: 50_000, intervalMonths: 72 },
 ];
+
+/**
+ * Есть ли у детали срок жизни. Деталь без интервалов отслеживать нечем — ресурс не
+ * посчитать, — поэтому в списке она заводится выключенной и живёт в каталоге, пока
+ * пользователь сам не включит её показ.
+ */
+export function hasInterval(entry: Pick<CatalogEntry, 'intervalKm' | 'intervalMonths'>): boolean {
+  return entry.intervalKm != null || entry.intervalMonths != null;
+}
 
 /**
  * Насколько часто деталь меняют — по этому значению строятся все списки: то, что
@@ -148,7 +160,6 @@ export const COMMON_SERVICES = [
   'tire-fitting',
   'balancing',
   'car-wash',
-  'throttle-cleaning',
   'ac-recharge',
 ] as const;
 
@@ -160,6 +171,5 @@ export const COMMON_SERVICE_CATEGORY: Record<string, CategoryKey> = {
   'tire-fitting': 'wheels',
   balancing: 'wheels',
   'car-wash': 'interior',
-  'throttle-cleaning': 'engine',
   'ac-recharge': 'interior',
 };

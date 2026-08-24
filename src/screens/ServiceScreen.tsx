@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Keyboard,
   Pressable,
   StyleSheet,
   View,
@@ -42,7 +43,7 @@ import {
 } from '../db/repositories';
 import { baselineForCar, calculateNextService, type LastChange } from '../domain/resource';
 import { effectiveMileage, validateMileageUpdate } from '../domain/validation';
-import type { Car, Part, ServiceRecordWithItems } from '../domain/types';
+import type { Car, Part, ServiceItem, ServiceRecordWithItems } from '../domain/types';
 import { formatDate, formatNumber, parseNumberInput } from '../lib/format';
 import type { Language } from '../i18n';
 import type { RootStackParamList } from '../navigation/types';
@@ -69,6 +70,15 @@ const TYPE = {
 type Navigation = NativeStackNavigationProp<RootStackParamList>;
 
 const carTitle = (car: Car): string => `${car.make} ${car.model}`;
+
+/**
+ * Комментарий к позиции: модель, артикул, любое уточнение. Пустую строку из формы
+ * считаем отсутствием комментария, иначе под названием повисла бы пустая строка.
+ */
+const itemNote = (item: ServiceItem): string | null => {
+  const note = item.note?.trim();
+  return note ? note : null;
+};
 
 /* ── Карточка одной записи ТО ───────────────────────────────────────────── */
 
@@ -118,16 +128,28 @@ function RecordCard({ record, partNames, language, onPress, onLongPress }: Recor
           <>
             <View style={[styles.divider, { backgroundColor: colors.border }]} />
             <View style={styles.recordBody}>
-              {parts.map((item) => (
-                <View key={item.id} style={styles.partRow}>
-                  <View style={[styles.dot, { backgroundColor: colors.textTertiary }]} />
-                  <AppText style={styles.partName}>
-                    {(item.partId ? partNames.get(item.partId) : null) ??
-                      item.name ??
-                      t('common.dash')}
-                  </AppText>
-                </View>
-              ))}
+              {parts.map((item) => {
+                // Комментарий уходит второй строкой: у детали название легко занимает всю
+                // ширину, и приписка через разделитель ломала бы его переносом.
+                const note = itemNote(item);
+                return (
+                  <View key={item.id} style={styles.partRow}>
+                    <View style={[styles.dot, { backgroundColor: colors.textTertiary }]} />
+                    <View style={styles.partText}>
+                      <AppText style={styles.partName}>
+                        {(item.partId ? partNames.get(item.partId) : null) ??
+                          item.name ??
+                          t('common.dash')}
+                      </AppText>
+                      {note ? (
+                        <AppText tone="tertiary" numberOfLines={2} style={styles.partNote}>
+                          {note}
+                        </AppText>
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })}
               {services.length > 0 ? (
                 <AppText tone="secondary" style={styles.servicesLine}>
                   {t('records.services', { list: serviceList })}
@@ -442,30 +464,38 @@ export default function ServiceScreen() {
           <ActivityIndicator color={colors.accent} />
         </View>
       ) : (
-        <FlatList
-          data={records}
-          keyExtractor={(item) => item.id}
-          renderItem={renderRecord}
-          ListHeaderComponent={header}
-          ListEmptyComponent={
-            <View style={styles.emptyRecords}>
-              <AppText variant="bodyMedium">{t('records.empty')}</AppText>
-              <AppText tone="secondary" style={styles.placeholderHint}>
-                {t('records.emptyHint')}
-              </AppText>
-              <PrimaryButton
-                title={t('records.add')}
-                icon={Plus}
-                onPress={() => navigation.navigate('RecordForm')}
-              />
-            </View>
-          }
-          contentContainerStyle={[
-            styles.listContent,
-            { paddingBottom: spacing.md + tabBarHeight },
-          ]}
-          showsVerticalScrollIndicator={false}
-        />
+        /*
+         * Тап по пустому месту снимает фокус с поля ввода. Обёртка не забирает нажатия у
+         * карточек и кнопок: ответчиком становится самый глубокий Pressable, а скролл
+         * отбирает жест по движению, поэтому обычный тап и долгое нажатие целы.
+         */
+        <Pressable accessible={false} onPress={Keyboard.dismiss} style={styles.listWrap}>
+          <FlatList
+            data={records}
+            keyExtractor={(item) => item.id}
+            renderItem={renderRecord}
+            ListHeaderComponent={header}
+            ListEmptyComponent={
+              <View style={styles.emptyRecords}>
+                <AppText variant="bodyMedium">{t('records.empty')}</AppText>
+                <AppText tone="secondary" style={styles.placeholderHint}>
+                  {t('records.emptyHint')}
+                </AppText>
+                <PrimaryButton
+                  title={t('records.add')}
+                  icon={Plus}
+                  onPress={() => navigation.navigate('RecordForm')}
+                />
+              </View>
+            }
+            contentContainerStyle={[
+              styles.listContent,
+              { paddingBottom: spacing.md + tabBarHeight },
+            ]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          />
+        </Pressable>
       )}
 
       {/* Ввод пробега: меньше максимума из истории поставить нельзя. */}
@@ -529,6 +559,9 @@ export default function ServiceScreen() {
 
 const styles = StyleSheet.create({
   screen: {
+    flex: 1,
+  },
+  listWrap: {
     flex: 1,
   },
   listContent: {
@@ -644,18 +677,27 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   partRow: {
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flexDirection: 'row',
     gap: spacing.sm,
   },
   dot: {
     borderRadius: 2.5,
     height: 5,
+    /** Маркер держится первой строки названия, даже когда под ней есть комментарий. */
+    marginTop: 6,
     width: 5,
   },
-  partName: {
+  partText: {
     flex: 1,
+    /* Тот же зазор, что у пробега с датой в шапке карточки: пара «название + подпись». */
+    gap: spacing.xxs,
+  },
+  partName: {
     fontSize: TYPE.partName,
+  },
+  partNote: {
+    fontSize: TYPE.note,
   },
   servicesLine: {
     fontSize: TYPE.recordDate,

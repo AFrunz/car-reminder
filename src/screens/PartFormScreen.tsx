@@ -25,6 +25,9 @@ import { parseNumberInput } from '../lib/format';
  * Своя запчасть: название, категория и интервалы. Полей последней замены здесь нет —
  * сведения о заменах берутся исключительно из записей ТО, и единый источник избавляет
  * от расхождений между карточкой детали и историей.
+ *
+ * Обязательное поле одно — название. Интервалы можно не задавать: деталь, которую меняют
+ * по состоянию, а не по регламенту, живёт в каталоге выключенной, пока интервал не появится.
  */
 
 type FormRoute = RouteProp<RootStackParamList, 'PartForm'>;
@@ -47,7 +50,6 @@ export default function PartFormScreen() {
   const [intervalMonthsText, setIntervalMonthsText] = useState('');
 
   const [nameError, setNameError] = useState<string | null>(null);
-  const [intervalError, setIntervalError] = useState<string | null>(null);
   const [categorySheetOpen, setCategorySheetOpen] = useState(false);
 
   // При создании деталь заводится для активной машины; при редактировании — остаётся у своей.
@@ -80,14 +82,13 @@ export default function PartFormScreen() {
     const intervalMonths = parseNumberInput(intervalMonthsText);
 
     const missingName = trimmed.length === 0;
-    // Хотя бы один интервал обязателен — по отдельности оба поля необязательны.
-    const missingInterval = intervalKm === null && intervalMonths === null;
     setNameError(missingName ? t('partForm.nameRequired') : null);
-    setIntervalError(missingInterval ? t('partForm.intervalRequired') : null);
-    if (missingName || missingInterval || carId === null) return;
+    if (missingName || carId === null) return;
 
     void (async () => {
       if (partId === undefined) {
+        // Деталь без интервалов сохраняется как обычно: `createCustomPart` сам заведёт её
+        // выключенной, потому что ресурс у неё считать не из чего.
         await createCustomPart({ carId, name: trimmed, categoryKey, intervalKm, intervalMonths });
       } else {
         await updatePart(partId, { name: trimmed, categoryKey, intervalKm, intervalMonths });
@@ -170,10 +171,7 @@ export default function PartFormScreen() {
                 style={styles.flex}
                 label={t('partForm.byMileage')}
                 value={intervalKmText}
-                onChangeText={(value) => {
-                  setIntervalKmText(value);
-                  setIntervalError(null);
-                }}
+                onChangeText={setIntervalKmText}
                 suffix={t('units.km')}
                 keyboardType="number-pad"
                 mono
@@ -182,20 +180,16 @@ export default function PartFormScreen() {
                 style={styles.flex}
                 label={t('partForm.byTime')}
                 value={intervalMonthsText}
-                onChangeText={(value) => {
-                  setIntervalMonthsText(value);
-                  setIntervalError(null);
-                }}
+                onChangeText={setIntervalMonthsText}
                 suffix={t('units.months')}
                 keyboardType="number-pad"
                 mono
               />
             </View>
-            {intervalError ? (
-              <AppText variant="caption" tone="danger">
-                {intervalError}
-              </AppText>
-            ) : null}
+            {/* Интервал необязателен — предупреждаем всегда, а не только при пустых полях. */}
+            <AppText variant="caption" tone="tertiary" style={styles.note}>
+              {t('partForm.noIntervalHint')}
+            </AppText>
           </View>
 
           <Banner tone="info" text={t('partForm.intervalHint')} />
