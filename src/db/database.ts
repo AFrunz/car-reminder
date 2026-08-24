@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import { CATALOG_BY_FREQUENCY, hasInterval, isApplicable } from '../data/catalog';
+import { CATALOG, CATALOG_BY_FREQUENCY, CATALOG_BY_KEY, hasInterval, isApplicable } from '../data/catalog';
 import type { FuelType, Transmission } from '../domain/types';
 
 interface CarRowForSync {
@@ -39,8 +39,8 @@ async function syncCatalogForCar(db: SQLite.SQLiteDatabase, car: CarRowForSync):
       hasInterval(entry);
     await db.runAsync(
       `INSERT INTO parts (id, car_id, catalog_key, name, category_key,
-        interval_km, interval_months, tracked, custom, sort_order)
-       VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, ?)`,
+        interval_km, interval_months, tracked, custom, scope, sort_order)
+       VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?)`,
       `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
       car.id,
       entry.key,
@@ -48,6 +48,7 @@ async function syncCatalogForCar(db: SQLite.SQLiteDatabase, car: CarRowForSync):
       entry.intervalKm,
       entry.intervalMonths,
       tracked ? 1 : 0,
+      entry.scope,
       i,
     );
   }
@@ -58,6 +59,34 @@ async function syncCatalogForCar(db: SQLite.SQLiteDatabase, car: CarRowForSync):
     car.id,
   );
 }
+
+/**
+ * Интервалы, стоявшие в каталоге до ревизии. Нужны ровно для одного: понять, правил ли
+ * пользователь значение под свою машину. Если правил — новое умолчание ему не навязываем.
+ */
+const LEGACY_DEFAULTS: Record<string, [number | null, number | null]> = {
+  'air-filter': [20_000, 24], 'spark-plugs': [30_000, 36], 'glow-plugs': [100_000, 60],
+  'timing-belt': [90_000, 84], 'timing-chain': [150_000, null], 'accessory-belt': [60_000, 60],
+  'pcv-valve': [60_000, null], 'engine-mounts': [100_000, null], 'oxygen-sensor': [100_000, null],
+  'catalytic-converter': [150_000, null], coolant: [60_000, 48], thermostat: [100_000, null],
+  'water-pump': [90_000, 84], radiator: [120_000, null],
+  'fuel-filter-diesel': [30_000, 24], 'fuel-filter-petrol': [30_000, 24],
+  'fuel-pump-strainer': [60_000, null], 'injectors-cleaning': [60_000, null],
+  'throttle-cleaning': [60_000, null], 'atf-and-filter': [60_000, 48],
+  'manual-gearbox-oil': [80_000, 60], 'clutch-kit': [120_000, null],
+  'differential-oil': [60_000, 48], 'cv-boots': [60_000, null], 'cv-joints': [120_000, null],
+  'front-brake-pads': [30_000, 36], 'rear-brake-pads': [50_000, 48],
+  'front-brake-discs': [60_000, null], 'rear-brake-discs': [90_000, null],
+  'brake-fluid': [60_000, 24], 'brake-hoses': [120_000, 96],
+  'parking-brake-shoes': [100_000, null], 'front-shocks': [80_000, 72],
+  'rear-shocks': [90_000, 72], 'strut-mounts': [80_000, null], springs: [120_000, null],
+  'front-stabilizer-links': [40_000, 36], 'stabilizer-bushings': [60_000, null],
+  'control-arm-bushings': [100_000, null], 'ball-joints': [80_000, null],
+  'wheel-bearings': [100_000, null], 'tie-rod-ends': [80_000, null], 'tie-rods': [100_000, null],
+  'power-steering-fluid': [60_000, 48], battery: [100_000, 48], alternator: [120_000, null],
+  starter: [150_000, null], 'low-beam-bulbs': [60_000, 36], 'wiper-blades': [20_000, 12],
+  'rust-proofing': [null, 24], 'summer-tires': [50_000, 72], 'winter-tires': [50_000, 72],
+};
 
 export const DATABASE_NAME = 'car-reminder.db';
 
@@ -151,6 +180,68 @@ const MIGRATIONS: Migration[] = [
 
   /** Избранные детали: закреплённые показываются отдельной секцией в начале списка. */
   'ALTER TABLE parts ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0',
+
+  /**
+   * Ревизия каталога по регламентам производителей. Половина позиций лишилась
+   * интервалов: у них нет нормированного срока, их меняют по состоянию, и круглые
+   * числа «на глазок» заставляли приложение вечно требовать ненужных замен. Часть
+   * интервалов исправлена, тяги стабилизатора и топливный фильтр разнесены, появилось
+   * поле кратности замены.
+   *
+   * Значения, которые пользователь правил под свою машину, не трогаем: обновляем
+   * только те, что совпадают со старым значением по умолчанию.
+   */
+  async (db) => {
+    await db.execAsync("ALTER TABLE parts ADD COLUMN scope TEXT NOT NULL DEFAULT 'single'");
+
+    const cars = await db.getAllAsync<CarRowForSync>('SELECT id, fuel, transmission FROM cars');
+    for (const car of cars) {
+      // Разнесённые позиции переносим на новые ключи, иначе они осиротеют и задвоятся.
+      await db.runAsync(
+        'UPDATE parts SET catalog_key = ? WHERE car_id = ? AND catalog_key = ?',
+        car.fuel === 'diesel' ? 'fuel-filter-diesel' : 'fuel-filter-petrol',
+        car.id,
+        'fuel-filter',
+      );
+      await db.runAsync(
+        'UPDATE parts SET catalog_key = ? WHERE car_id = ? AND catalog_key = ?',
+        'front-stabilizer-links',
+        car.id,
+        'stabilizer-links',
+      );
+
+      for (const [key, [oldKm, oldMonths]] of Object.entries(LEGACY_DEFAULTS)) {
+        const entry = CATALOG_BY_KEY[key];
+        if (!entry) continue;
+        await db.runAsync(
+          `UPDATE parts SET interval_km = ?, interval_months = ?, tracked = ?
+           WHERE car_id = ? AND catalog_key = ?
+             AND interval_km IS ? AND interval_months IS ?`,
+          entry.intervalKm,
+          entry.intervalMonths,
+          hasInterval(entry) &&
+            isApplicable(entry, car.fuel as FuelType, car.transmission as Transmission)
+            ? 1
+            : 0,
+          car.id,
+          key,
+          oldKm,
+          oldMonths,
+        );
+      }
+
+      for (const entry of CATALOG) {
+        await db.runAsync(
+          'UPDATE parts SET scope = ? WHERE car_id = ? AND catalog_key = ?',
+          entry.scope,
+          car.id,
+          entry.key,
+        );
+      }
+
+      await syncCatalogForCar(db, car);
+    }
+  },
 ];
 
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {

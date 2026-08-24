@@ -10,7 +10,13 @@ import { useColors } from '../theme/ThemeProvider';
 import { fonts, lineHeight, radius, sizes, spacing, typography } from '../theme/tokens';
 import { useGarage } from '../state/GarageContext';
 import { listParts, updatePart } from '../db/repositories';
-import { CATALOG, isApplicable, inapplicableReason, type CatalogEntry } from '../data/catalog';
+import {
+  CATALOG,
+  hasInterval,
+  isApplicable,
+  inapplicableReason,
+  type CatalogEntry,
+} from '../data/catalog';
 import { CATEGORY_KEYS, type Car, type Part } from '../domain/types';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -63,14 +69,21 @@ export default function PartsCatalogScreen({ navigation }: Props) {
     [t],
   );
 
-  /** Причина показывается только у позиций, не подходящих этой машине. */
+  /**
+   * Почему позиция лежит выключенной. Сначала несовместимость с машиной — она сильнее:
+   * такую деталь включать попросту незачем. Если по машине деталь подходит, но срока
+   * замены у неё нет, говорим об этом: иначе выключенный тумблер выглядит случайным.
+   */
   const resolveReason = useCallback(
     (part: Part): string | null => {
-      if (!activeCar || !part.catalogKey) return null;
-      const entry = CATALOG_BY_KEY.get(part.catalogKey);
-      if (!entry || isApplicable(entry, activeCar.fuel, activeCar.transmission)) return null;
-      const reason = inapplicableReason(entry);
-      return reason ? t(`reason.${reason}`) : null;
+      const entry = part.catalogKey ? CATALOG_BY_KEY.get(part.catalogKey) : undefined;
+      if (activeCar && entry && !isApplicable(entry, activeCar.fuel, activeCar.transmission)) {
+        const reason = inapplicableReason(entry);
+        if (reason) return t(`reason.${reason}`);
+      }
+      // Интервалы берём из самой детали, а не из каталога: пользователь мог задать свои.
+      if (!hasInterval(part)) return t('catalogScreen.noInterval');
+      return null;
     },
     [activeCar, t],
   );

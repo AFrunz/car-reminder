@@ -276,6 +276,23 @@ export default function PartDetailScreen() {
               </AppText>
               <Pencil size={sizes.iconXs} color={colors.textTertiary} />
             </Pressable>
+            {/*
+              Кратность замены: сколько таких деталей в машине и как их меняют. Подпись
+              стоит вплотную к плиткам интервалов, потому что у `each` следом идёт
+              пояснение — ответ на вопрос, почему в этих плитках прочерки.
+            */}
+            {part === null ? null : (
+              <View style={styles.scopeBlock}>
+                <AppText variant="caption" tone="tertiary">
+                  {t(`scope.${part.scope}`)}
+                </AppText>
+                {part.scope === 'each' ? (
+                  <AppText variant="caption" tone="tertiary" style={styles.scopeHint}>
+                    {t('scope.eachHint')}
+                  </AppText>
+                ) : null}
+              </View>
+            )}
           </View>
 
           <View style={styles.intervals}>
@@ -575,6 +592,13 @@ const styles = StyleSheet.create({
   nameValue: {
     flex: 1,
     fontSize: fontSize.fieldValue,
+  },
+  scopeBlock: {
+    gap: spacing.xxs,
+  },
+  /** Пояснение переносится на две-три строки — без межстрочного они слипаются. */
+  scopeHint: {
+    lineHeight: typography.caption.fontSize * lineHeight.relaxed,
   },
   intervals: {
     flexDirection: 'row',

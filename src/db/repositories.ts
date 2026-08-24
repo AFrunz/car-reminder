@@ -94,8 +94,8 @@ export async function createCar(input: NewCar): Promise<Car> {
       const entry = CATALOG_BY_FREQUENCY[i];
       await db.runAsync(
         `INSERT INTO parts (id, car_id, catalog_key, name, category_key,
-          interval_km, interval_months, tracked, custom, sort_order)
-         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, ?)`,
+          interval_km, interval_months, tracked, custom, scope, sort_order)
+         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?)`,
         createId(),
         id,
         entry.key,
@@ -103,6 +103,7 @@ export async function createCar(input: NewCar): Promise<Car> {
         entry.intervalKm,
         entry.intervalMonths,
         isApplicable(entry, input.fuel, input.transmission) && hasInterval(entry) ? 1 : 0,
+        entry.scope,
         i,
       );
     }
@@ -153,6 +154,7 @@ interface PartRow {
   tracked: number;
   pinned: number;
   custom: number;
+  scope: string;
   sort_order: number;
 }
 
@@ -167,6 +169,7 @@ const toPart = (r: PartRow): Part => ({
   tracked: r.tracked === 1,
   pinned: r.pinned === 1,
   custom: r.custom === 1,
+  scope: r.scope as Part['scope'],
   sortOrder: r.sort_order,
 });
 

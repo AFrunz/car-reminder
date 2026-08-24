@@ -1,4 +1,5 @@
 export type FuelType = 'petrol' | 'diesel' | 'hybrid' | 'electric';
+export type ReplacementScope = 'single' | 'set' | 'axle' | 'each';
 export type Transmission = 'manual' | 'automatic';
 
 export const CATEGORY_KEYS = [
@@ -41,7 +42,6 @@ export interface Part {
    */
   name: string | null;
   categoryKey: CategoryKey;
-  /** Хотя бы один из интервалов обязателен. */
   intervalKm: number | null;
   intervalMonths: number | null;
   /** Отслеживается ли деталь: выключенные не показываются на вкладке «Запчасти». */
@@ -49,6 +49,8 @@ export interface Part {
   /** Закреплена в избранном — показывается отдельной секцией в самом верху списка. */
   pinned: boolean;
   custom: boolean;
+  /** Как деталь меняется физически: целиком, по оси, поштучно. */
+  scope: ReplacementScope;
   sortOrder: number;
 }
 

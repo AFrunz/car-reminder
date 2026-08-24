@@ -35,7 +35,8 @@ const en: Translations = {
     radiator: 'Radiator',
 
     // Fuel system
-    'fuel-filter': 'Fuel filter',
+    'fuel-filter-diesel': 'Fuel filter (diesel)',
+    'fuel-filter-petrol': 'Fuel filter (petrol)',
     'fuel-pump-strainer': 'Fuel pump strainer',
     'injectors-cleaning': 'Injector cleaning',
     'throttle-cleaning': 'Throttle body cleaning',
@@ -63,7 +64,8 @@ const en: Translations = {
     'rear-shocks': 'Rear shock absorbers',
     'strut-mounts': 'Strut top mounts',
     springs: 'Springs',
-    'stabilizer-links': 'Anti-roll bar links',
+    'front-stabilizer-links': 'Front anti-roll bar links',
+    'rear-stabilizer-links': 'Rear anti-roll bar links',
     'stabilizer-bushings': 'Anti-roll bar bushes',
     'control-arm-bushings': 'Control arm bushes',
     'ball-joints': 'Ball joints',
@@ -84,6 +86,7 @@ const en: Translations = {
     'rust-proofing': 'Rust proofing',
 
     // Tyres & wheels
+    'tire-rotation': 'Tyre rotation',
     'summer-tires': 'Summer tyres',
     'winter-tires': 'Winter tyres',
   },
@@ -98,6 +101,15 @@ const en: Translations = {
     electrical: 'Electrical',
     interior: 'Interior & body',
     wheels: 'Tyres & wheels',
+  },
+
+  scope: {
+    single: 'one per car',
+    set: 'replaced as a full set',
+    axle: 'replaced in pairs, per axle',
+    each: 'replaced one at a time',
+    eachHint:
+      'A car has several of these and they are replaced one at a time, so there is no shared interval to count for them.',
   },
 
   garage: {
@@ -231,6 +243,7 @@ const en: Translations = {
     hint: 'Tick what to track for {{car}}. Unticked parts leave the Parts tab, but their history is kept — you can bring a part back at any time.',
     empty: 'Nothing found',
     custom: 'Own parts',
+    noInterval: 'no replacement interval set',
   },
 
   reason: {
