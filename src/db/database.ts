@@ -13,6 +13,12 @@ interface CarRowForSync {
  * существующим обновляет порядок. Вызывается из миграций — каталог пополняется с
  * версиями приложения, и уже заведённые машины должны получать новые позиции.
  *
+ * ВАЖНО: функция вызывается из СТАРЫХ миграций, поэтому обязана обходиться колонками,
+ * которые существовали на момент самой ранней из них. Добавишь сюда колонку, добавленную
+ * поздней миграцией, — и обновление сломается у всех, кто ещё не дошёл до неё: старая
+ * миграция упадёт на несуществующем столбце. Значения по умолчанию таким колонкам
+ * проставляет та миграция, которая их вводит.
+ *
  * Деталь без единого интервала заводится выключенной: ресурс у неё посчитать нечем,
  * в списке отслеживания ей делать нечего, но в каталоге она доступна для включения.
  */
@@ -39,8 +45,8 @@ async function syncCatalogForCar(db: SQLite.SQLiteDatabase, car: CarRowForSync):
       hasInterval(entry);
     await db.runAsync(
       `INSERT INTO parts (id, car_id, catalog_key, name, category_key,
-        interval_km, interval_months, tracked, custom, scope, sort_order)
-       VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?)`,
+        interval_km, interval_months, tracked, custom, sort_order)
+       VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, ?)`,
       `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
       car.id,
       entry.key,
@@ -48,7 +54,6 @@ async function syncCatalogForCar(db: SQLite.SQLiteDatabase, car: CarRowForSync):
       entry.intervalKm,
       entry.intervalMonths,
       tracked ? 1 : 0,
-      entry.scope,
       i,
     );
   }
@@ -230,6 +235,9 @@ const MIGRATIONS: Migration[] = [
         );
       }
 
+      await syncCatalogForCar(db, car);
+
+      // После догрузки каталога — кратность замены всем позициям, включая новые.
       for (const entry of CATALOG) {
         await db.runAsync(
           'UPDATE parts SET scope = ? WHERE car_id = ? AND catalog_key = ?',
@@ -238,8 +246,6 @@ const MIGRATIONS: Migration[] = [
           entry.key,
         );
       }
-
-      await syncCatalogForCar(db, car);
     }
   },
 ];

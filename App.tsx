@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -46,26 +46,50 @@ export default function App() {
     JetBrainsMono_700Bold,
   });
   const [ready, setReady] = useState(false);
+  const [startupError, setStartupError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     // База открывается раньше i18n: язык интерфейса хранится в её настройках.
-    void (async () => {
-      await getDatabase();
-      await initI18n();
-      setReady(true);
+    (async () => {
+      try {
+        await getDatabase();
+        await initI18n();
+        if (!cancelled) setReady(true);
+      } catch (error) {
+        // Без этого любая ошибка запуска — например неудачная миграция — оставляла
+        // приложение в вечной загрузке без единого намёка на причину.
+        console.error('Не удалось запустить приложение', error);
+        if (!cancelled) setStartupError(error instanceof Error ? error.message : String(error));
+      }
     })();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
+
+  if (startupError) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.errorTitle}>Не удалось запустить приложение</Text>
+        <Text style={styles.errorBody}>{startupError}</Text>
+        <Pressable
+          style={styles.retry}
+          onPress={() => {
+            setStartupError(null);
+            setAttempt((value) => value + 1);
+          }}
+        >
+          <Text style={styles.retryLabel}>Повторить</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   if (!fontsLoaded || !ready) {
     return (
-      <View
-        style={{
-          flex: 1,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: palette.light.bg,
-        }}
-      >
+      <View style={styles.center}>
         <ActivityIndicator color={palette.light.accent} />
       </View>
     );
@@ -81,3 +105,38 @@ export default function App() {
     </GestureHandlerRootView>
   );
 }
+
+// Стили экрана ошибки намеренно не зависят ни от темы, ни от шрифтов: он показывается
+// именно тогда, когда что-то из этого могло не подняться.
+const styles = StyleSheet.create({
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    backgroundColor: palette.light.bg,
+  },
+  errorTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: palette.light.textPrimary,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  errorBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: palette.light.textSecondary,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  retry: {
+    height: 48,
+    paddingHorizontal: 24,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.light.accent,
+  },
+  retryLabel: { fontSize: 16, fontWeight: '600', color: palette.light.onAccent },
+});
