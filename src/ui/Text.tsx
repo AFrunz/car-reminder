@@ -2,7 +2,15 @@ import { Text, type TextProps } from 'react-native';
 import { useColors } from '../theme/ThemeProvider';
 import { fonts, typography, type Colors } from '../theme/tokens';
 
-export type TextTone = 'primary' | 'secondary' | 'tertiary' | 'accent' | 'ok' | 'warn' | 'danger';
+export type TextTone =
+  | 'primary'
+  | 'secondary'
+  | 'tertiary'
+  | 'accent'
+  | 'ok'
+  | 'warn'
+  | 'inspect'
+  | 'danger';
 export type TextVariant = keyof typeof typography;
 export type MonoWeight = 'regular' | 'semibold' | 'bold';
 
@@ -13,6 +21,7 @@ const TONE_COLOR: Record<TextTone, keyof Colors> = {
   accent: 'accent',
   ok: 'ok',
   warn: 'warn',
+  inspect: 'inspect',
   danger: 'danger',
 };
 

@@ -18,9 +18,11 @@ export function ProgressBar({ value, status, style }: ProgressBarProps) {
       ? colors.ok
       : status === 'warn'
         ? colors.warn
-        : status === 'overdue'
-          ? colors.danger
-          : colors.muted;
+        : status === 'inspect'
+          ? colors.inspect
+          : status === 'overdue'
+            ? colors.danger
+            : colors.muted;
 
   return (
     <View style={[styles.track, { backgroundColor: colors.surfaceAlt }, style]}>

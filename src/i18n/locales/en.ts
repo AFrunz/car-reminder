@@ -83,12 +83,14 @@ const en: Translations = {
     // Interior & body
     'cabin-filter': 'Cabin filter',
     'wiper-blades': 'Wiper blades',
-    'rust-proofing': 'Rust proofing',
+    'ac-service': 'A/C service & leak check',
+    'ac-disinfection': 'A/C disinfection',
 
     // Tyres & wheels
     'tire-rotation': 'Tyre rotation',
     'summer-tires': 'Summer tyres',
     'winter-tires': 'Winter tyres',
+    'wheel-alignment': 'Wheel alignment',
   },
 
   category: {
@@ -109,7 +111,7 @@ const en: Translations = {
     axle: 'replaced in pairs, per axle',
     each: 'replaced one at a time',
     eachHint:
-      'A car has several of these and they are replaced one at a time, so there is no shared interval to count for them.',
+      'A car has several of these and they are replaced one at a time, so there is no shared replacement interval for them. They are inspected all at once, though, so the inspection interval is shared.',
   },
 
   garage: {
@@ -120,11 +122,9 @@ const en: Translations = {
   service: {
     'oil-change-labour': 'Oil change (labour)',
     diagnostics: 'Diagnostics',
-    'wheel-alignment': 'Wheel alignment',
     'tire-fitting': 'Tyre fitting',
     balancing: 'Wheel balancing',
     'car-wash': 'Car wash',
-    'ac-recharge': 'A/C recharge',
 
     currentMileage: 'Current mileage',
     updateMileage: 'Update mileage',
@@ -160,6 +160,8 @@ const en: Translations = {
     count_few: '{{count}} service records',
     count_many: '{{count}} service records',
     count_other: '{{count}} service records',
+    inspected: 'inspection',
+    inspectedMeasured: 'inspection · {{mm}} mm',
   },
 
   parts: {
@@ -171,6 +173,13 @@ const en: Translations = {
     overdueKm: '{{km}} km · overdue',
     overdueMonths: '{{months}} mo · overdue',
     noData: 'no data',
+    inspectDue: 'due for inspection',
+    inspectDueWith: '{{value}} · inspect',
+    inspectInKm: 'inspect in {{km}} km',
+    inspectInMonths: 'inspect in {{months}} mo',
+    wear: '≈ {{mm}} mm',
+    wearKm: '≈ {{mm}} mm · {{km}} km',
+    wearOverdue: '≈ {{mm}} mm · replace now',
     pinned: 'Pinned',
     assumed: '{{value}} · no data',
     addCustom: 'Own part',
@@ -200,12 +209,30 @@ const en: Translations = {
     intervalMonths: 'Time interval',
     editIntervals: 'Edit intervals',
     intervalNotSet: 'not set',
-    changes: 'Replacement history',
+    changes: 'Replacements & inspections',
     lastChange: 'last replacement',
+    inspection: 'Inspection',
+    inspectDue: 'due for inspection',
+    inspectIn: 'inspect in {{km}} km or {{months}} mo',
+    recordInspection: 'Record an inspection',
+    wear: 'Wear',
+    wearRange: '{{from}} → {{to}} mm',
+    wearNew: 'New',
+    wearMin: 'Limit',
+    wearNow: '≈ {{mm}} mm left',
+    wearMeasured: 'measured {{mm}} mm at {{mileage}} km',
+    wearEstimated: 'measured {{mm}} mm at {{mileage}} km · now ≈ {{estimate}} mm',
+    wearHint:
+      'Measure the thickness at the next inspection and enter it in the service record — remaining life will follow the measurement instead of the interval.',
+    wearExplain:
+      'Thickness of a new part and the limit it is replaced at. Set both and you can enter a measurement when inspecting; remaining life is then counted from it.',
+    wearInvalid: 'Set both thicknesses, with the new one above the limit — or clear both',
     noChanges: 'No replacements yet',
     noChangesHint: 'Replacements come from service records — add the first one and it shows up here.',
     assumedHint:
       'No replacements on record — we take it the part has never been changed and count from zero. Add a service record and the figures become exact.',
+    assumedInspectionHint:
+      'No inspections on record — we take it the part has not been checked since the car was new. Record an inspection and the count starts from it.',
     setLastChange: 'Set the last replacement',
     setLastChangeHint: 'This adds a back-dated service record — the count starts from it.',
     pin: 'Pin to favourites',
@@ -224,6 +251,9 @@ const en: Translations = {
     namePlaceholder: 'Accessory belt',
     category: 'Category',
     interval: 'Replacement interval',
+    inspectInterval: 'Inspection interval',
+    inspectHint:
+      'For parts replaced by condition but checked on a schedule. When it runs out, the ring turns yellow. Replacing the part resets it too.',
     byMileage: 'By mileage',
     byTime: 'By time',
     intervalHint:
@@ -243,7 +273,7 @@ const en: Translations = {
     hint: 'Tick what to track for {{car}}. Unticked parts leave the Parts tab, but their history is kept — you can bring a part back at any time.',
     empty: 'Nothing found',
     custom: 'Own parts',
-    noInterval: 'no replacement interval set',
+    noInterval: 'no replacement or inspection interval',
   },
 
   reason: {
@@ -264,9 +294,15 @@ const en: Translations = {
     title: 'New service',
     editTitle: 'Service record',
     date: 'Date',
+    datePlaceholder: 'dd.mm.yyyy',
+    openCalendar: 'Pick from calendar',
     mileage: 'Mileage',
     kind: 'Service type',
-    parts: 'Replaced parts',
+    parts: 'Parts',
+    actionReplace: 'Replaced',
+    actionInspect: 'Inspected',
+    measurement: 'Measured thickness',
+    measurementHint: 'New is {{from}} mm, replace at {{to}} mm. Optional.',
     addPart: 'Add part',
     noParts: 'No parts yet',
     services: 'Services',
@@ -400,6 +436,7 @@ const en: Translations = {
   units: {
     km: 'km',
     months: 'mo',
+    mm: 'mm',
     kmValue: '{{value}} km',
     monthsValue: '{{value}} mo',
     monthsLong_one: '{{count}} month',

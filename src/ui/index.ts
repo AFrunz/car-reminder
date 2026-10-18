@@ -4,6 +4,7 @@ export { Banner, type BannerProps, type BannerTone } from './Banner';
 export { BottomSheet, type BottomSheetProps } from './BottomSheet';
 export { OutlineButton, PrimaryButton } from './Button';
 export { Card, type CardProps } from './Card';
+export { CarPickerSheet, type CarPickerSheetProps } from './CarPickerSheet';
 export { Donut, type DonutProps } from './Donut';
 export { Field, SelectField, type FieldProps, type SelectFieldProps } from './Field';
 export { IconButton, type IconButtonProps, type IconButtonVariant } from './IconButton';

@@ -44,6 +44,19 @@ export interface Part {
   categoryKey: CategoryKey;
   intervalKm: number | null;
   intervalMonths: number | null;
+  /**
+   * Интервал проверки — третий, независимый от замены. Есть детали, которые меняют по
+   * состоянию, но осматривают по регламенту: пыльники, шаровые, шланги. Проверка
+   * сбрасывает только свой счётчик, замена — оба.
+   */
+  inspectKm: number | null;
+  inspectMonths: number | null;
+  /**
+   * Измеряемый износ, мм: толщина новой детали и предел, на котором её меняют. Заданы
+   * оба — при проверке можно вписать замер, и ресурс считается по нему, а не по интервалу.
+   */
+  wearNew: number | null;
+  wearMin: number | null;
   /** Отслеживается ли деталь: выключенные не показываются на вкладке «Запчасти». */
   tracked: boolean;
   /** Закреплена в избранном — показывается отдельной секцией в самом верху списка. */
@@ -70,6 +83,9 @@ export interface ServiceRecord {
 
 export type ServiceItemType = 'part' | 'service';
 
+/** Что сделали с деталью в записи ТО. У услуг всегда `replace` — значение по умолчанию. */
+export type ItemAction = 'replace' | 'inspect';
+
 export interface ServiceItem {
   id: string;
   recordId: string;
@@ -82,6 +98,9 @@ export interface ServiceItem {
   cost: number | null;
   /** Свободная пометка к позиции: модель, артикул, что угодно. */
   note: string | null;
+  action: ItemAction;
+  /** Замер остатка при проверке, мм; null — не мерили. */
+  measurement: number | null;
 }
 
 export interface ServiceRecordWithItems extends ServiceRecord {

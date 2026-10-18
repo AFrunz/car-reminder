@@ -5,6 +5,7 @@ import type {
   Car,
   CategoryKey,
   FuelType,
+  ItemAction,
   Part,
   ServiceItem,
   ServiceKind,
@@ -12,7 +13,7 @@ import type {
   ServiceRecordWithItems,
   Transmission,
 } from '../domain/types';
-import type { LastChange } from '../domain/resource';
+import type { LastChange, PartEvent } from '../domain/resource';
 
 /* ── Машины ─────────────────────────────────────────────────────────────── */
 
@@ -94,14 +95,19 @@ export async function createCar(input: NewCar): Promise<Car> {
       const entry = CATALOG_BY_FREQUENCY[i];
       await db.runAsync(
         `INSERT INTO parts (id, car_id, catalog_key, name, category_key,
-          interval_km, interval_months, tracked, custom, scope, sort_order)
-         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?)`,
+          interval_km, interval_months, inspect_km, inspect_months, wear_new, wear_min,
+          tracked, custom, scope, sort_order)
+         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         createId(),
         id,
         entry.key,
         entry.category,
         entry.intervalKm,
         entry.intervalMonths,
+        entry.inspectKm ?? null,
+        entry.inspectMonths ?? null,
+        entry.wearNew ?? null,
+        entry.wearMin ?? null,
         isApplicable(entry, input.fuel, input.transmission) && hasInterval(entry) ? 1 : 0,
         entry.scope,
         i,
@@ -151,6 +157,10 @@ interface PartRow {
   category_key: string;
   interval_km: number | null;
   interval_months: number | null;
+  inspect_km: number | null;
+  inspect_months: number | null;
+  wear_new: number | null;
+  wear_min: number | null;
   tracked: number;
   pinned: number;
   custom: number;
@@ -166,6 +176,10 @@ const toPart = (r: PartRow): Part => ({
   categoryKey: r.category_key as CategoryKey,
   intervalKm: r.interval_km,
   intervalMonths: r.interval_months,
+  inspectKm: r.inspect_km,
+  inspectMonths: r.inspect_months,
+  wearNew: r.wear_new,
+  wearMin: r.wear_min,
   tracked: r.tracked === 1,
   pinned: r.pinned === 1,
   custom: r.custom === 1,
@@ -195,6 +209,8 @@ export interface NewPart {
   categoryKey: CategoryKey;
   intervalKm: number | null;
   intervalMonths: number | null;
+  inspectKm: number | null;
+  inspectMonths: number | null;
 }
 
 export async function createCustomPart(input: NewPart): Promise<Part> {
@@ -206,14 +222,16 @@ export async function createCustomPart(input: NewPart): Promise<Part> {
   );
   await db.runAsync(
     `INSERT INTO parts (id, car_id, catalog_key, name, category_key,
-      interval_km, interval_months, tracked, custom, sort_order)
-     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 1, ?)`,
+      interval_km, interval_months, inspect_km, inspect_months, tracked, custom, sort_order)
+     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     id,
     input.carId,
     input.name,
     input.categoryKey,
     input.intervalKm,
     input.intervalMonths,
+    input.inspectKm,
+    input.inspectMonths,
     hasInterval(input) ? 1 : 0,
     row?.next ?? 0,
   );
@@ -223,27 +241,40 @@ export async function createCustomPart(input: NewPart): Promise<Part> {
 export async function updatePart(
   id: string,
   patch: Partial<
-    Pick<Part, 'name' | 'categoryKey' | 'intervalKm' | 'intervalMonths' | 'tracked' | 'pinned'>
+    Pick<
+      Part,
+      | 'name'
+      | 'categoryKey'
+      | 'intervalKm'
+      | 'intervalMonths'
+      | 'inspectKm'
+      | 'inspectMonths'
+      | 'wearNew'
+      | 'wearMin'
+      | 'tracked'
+      | 'pinned'
+    >
   >,
 ): Promise<void> {
   const db = await getDatabase();
   const fields: string[] = [];
   const values: SQLiteBindValue[] = [];
-  if (patch.name !== undefined) {
-    fields.push('name = ?');
-    values.push(patch.name);
-  }
-  if (patch.categoryKey !== undefined) {
-    fields.push('category_key = ?');
-    values.push(patch.categoryKey);
-  }
-  if (patch.intervalKm !== undefined) {
-    fields.push('interval_km = ?');
-    values.push(patch.intervalKm);
-  }
-  if (patch.intervalMonths !== undefined) {
-    fields.push('interval_months = ?');
-    values.push(patch.intervalMonths);
+  const columns = {
+    name: 'name',
+    categoryKey: 'category_key',
+    intervalKm: 'interval_km',
+    intervalMonths: 'interval_months',
+    inspectKm: 'inspect_km',
+    inspectMonths: 'inspect_months',
+    wearNew: 'wear_new',
+    wearMin: 'wear_min',
+  } as const;
+  for (const [key, column] of Object.entries(columns)) {
+    const value = patch[key as keyof typeof columns];
+    if (value !== undefined) {
+      fields.push(`${column} = ?`);
+      values.push(value);
+    }
   }
   if (patch.tracked !== undefined) {
     fields.push('tracked = ?');
@@ -276,41 +307,68 @@ export async function deleteOrHidePart(id: string): Promise<'deleted' | 'hidden'
   return 'hidden';
 }
 
-/** Последняя замена детали — исключительно по записям ТО. */
-export async function lastChangeForPart(partId: string): Promise<LastChange | null> {
-  const db = await getDatabase();
-  const row = await db.getFirstAsync<{ mileage: number; date: string }>(
-    `SELECT r.mileage AS mileage, r.date AS date
-     FROM service_items i JOIN service_records r ON r.id = i.record_id
-     WHERE i.part_id = ? ORDER BY r.mileage DESC, r.date DESC LIMIT 1`,
-    partId,
-  );
-  return row ?? null;
+interface EventRow {
+  part_id: string;
+  action: string;
+  mileage: number;
+  date: string;
+  measurement: number | null;
 }
 
-export async function lastChangesForCar(carId: string): Promise<Record<string, LastChange>> {
+const toEvent = (r: EventRow): PartEvent => ({
+  partId: r.part_id,
+  action: r.action as ItemAction,
+  mileage: r.mileage,
+  date: r.date,
+  measurement: r.measurement,
+});
+
+/**
+ * Все замены и проверки деталей машины — исключительно по записям ТО. Сворачивает их
+ * в последнюю замену, проверку и замер `summarizePartEvents`.
+ */
+export async function partEventsForCar(carId: string): Promise<PartEvent[]> {
   const db = await getDatabase();
-  const rows = await db.getAllAsync<{ part_id: string; mileage: number; date: string }>(
-    `SELECT i.part_id AS part_id, MAX(r.mileage) AS mileage, r.date AS date
+  const rows = await db.getAllAsync<EventRow>(
+    `SELECT i.part_id AS part_id, i.action AS action, i.measurement AS measurement,
+       r.mileage AS mileage, r.date AS date
      FROM service_items i JOIN service_records r ON r.id = i.record_id
-     WHERE r.car_id = ? AND i.part_id IS NOT NULL
-     GROUP BY i.part_id`,
+     WHERE r.car_id = ? AND i.part_id IS NOT NULL`,
     carId,
   );
-  const result: Record<string, LastChange> = {};
-  for (const row of rows) result[row.part_id] = { mileage: row.mileage, date: row.date };
-  return result;
+  return rows.map(toEvent);
 }
 
-/** История замен конкретной детали, от свежих к старым. */
-export async function historyForPart(partId: string): Promise<
-  Array<{ recordId: string; mileage: number; date: string; cost: number | null; note: string | null }>
-> {
+export async function partEvents(partId: string): Promise<PartEvent[]> {
   const db = await getDatabase();
-  return db.getAllAsync(
-    `SELECT r.id AS recordId, r.mileage AS mileage, r.date AS date, i.cost AS cost, i.note AS note
+  const rows = await db.getAllAsync<EventRow>(
+    `SELECT i.part_id AS part_id, i.action AS action, i.measurement AS measurement,
+       r.mileage AS mileage, r.date AS date
      FROM service_items i JOIN service_records r ON r.id = i.record_id
-     WHERE i.part_id = ? ORDER BY r.mileage DESC`,
+     WHERE i.part_id = ?`,
+    partId,
+  );
+  return rows.map(toEvent);
+}
+
+export interface PartHistoryEntry {
+  recordId: string;
+  mileage: number;
+  date: string;
+  cost: number | null;
+  note: string | null;
+  action: ItemAction;
+  measurement: number | null;
+}
+
+/** История замен и проверок конкретной детали, от свежих к старым. */
+export async function historyForPart(partId: string): Promise<PartHistoryEntry[]> {
+  const db = await getDatabase();
+  return db.getAllAsync<PartHistoryEntry>(
+    `SELECT r.id AS recordId, r.mileage AS mileage, r.date AS date, i.cost AS cost,
+       i.note AS note, i.action AS action, i.measurement AS measurement
+     FROM service_items i JOIN service_records r ON r.id = i.record_id
+     WHERE i.part_id = ? ORDER BY r.mileage DESC, r.date DESC`,
     partId,
   );
 }
@@ -346,6 +404,8 @@ interface ItemRow {
   category_key: string;
   cost: number | null;
   note: string | null;
+  action: string;
+  measurement: number | null;
 }
 
 const toItem = (r: ItemRow): ServiceItem => ({
@@ -357,6 +417,8 @@ const toItem = (r: ItemRow): ServiceItem => ({
   categoryKey: r.category_key as CategoryKey,
   cost: r.cost,
   note: r.note,
+  action: r.action as ItemAction,
+  measurement: r.measurement,
 });
 
 export async function listRecords(carId: string): Promise<ServiceRecord[]> {
@@ -406,6 +468,8 @@ export interface NewServiceItem {
   cost: number | null;
   /** Свободная пометка: модель, артикул, что угодно. */
   note: string | null;
+  action: ItemAction;
+  measurement: number | null;
 }
 
 export interface NewServiceRecord {
@@ -446,8 +510,9 @@ export async function saveRecord(input: NewServiceRecord, id?: string): Promise<
     }
     for (const item of input.items) {
       await db.runAsync(
-        `INSERT INTO service_items (id, record_id, type, part_id, name, category_key, cost, note)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO service_items
+           (id, record_id, type, part_id, name, category_key, cost, note, action, measurement)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         createId(),
         recordId,
         item.type,
@@ -456,6 +521,8 @@ export async function saveRecord(input: NewServiceRecord, id?: string): Promise<
         item.categoryKey,
         item.cost,
         item.note,
+        item.action,
+        item.measurement,
       );
     }
   });

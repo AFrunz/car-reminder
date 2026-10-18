@@ -1,30 +1,35 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useTranslation } from 'react-i18next';
-import { Check, ListChecks, Plus } from 'lucide-react-native';
+import { ListChecks, Plus } from 'lucide-react-native';
 
 import {
   AppBar,
   AppText,
-  BottomSheet,
   CarAppBar,
+  CarPickerSheet,
   IconButton,
   PartRow,
   SectionHeader,
-  type TextTone,
 } from '../ui';
 import { useColors } from '../theme/ThemeProvider';
-import { layout, sizes, spacing } from '../theme/tokens';
+import { sizes, spacing } from '../theme/tokens';
 import { useGarage } from '../state/GarageContext';
-import { lastChangesForCar, listParts, listRecords, todayIso } from '../db/repositories';
-import { baselineForCar, calculateResource, type Resource } from '../domain/resource';
+import { listParts, listRecords, partEventsForCar, todayIso } from '../db/repositories';
+import {
+  baselineForCar,
+  byUrgency,
+  resourceForPart,
+  summarizePartEvents,
+  type Resource,
+} from '../domain/resource';
 import { effectiveMileage } from '../domain/validation';
 import { CATEGORY_KEYS, type Car, type CategoryKey, type Part } from '../domain/types';
-import { formatNumber, formatSigned } from '../lib/format';
+import { describeResource } from '../lib/resourceText';
 import { currentLanguage } from '../i18n';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -38,16 +43,11 @@ interface PartResource {
   resource: Resource;
 }
 
-interface Subtitle {
-  text: string;
-  tone: TextTone;
-}
-
 const carTitle = (car: Car): string => `${car.make} ${car.model}`;
 
-/** Сначала самые критичные: сортировка по возрастанию остатка ресурса. */
+/** Сначала самые критичные: просрочка, проверка, «скоро менять», затем по остатку. */
 const byRemaining = (a: PartResource, b: PartResource): number =>
-  (a.resource.value ?? 0) - (b.resource.value ?? 0);
+  byUrgency(a.resource, b.resource);
 
 export default function PartsScreen() {
   const { t } = useTranslation();
@@ -79,19 +79,20 @@ export default function PartsScreen() {
     let cancelled = false;
     setLoading(true);
     void (async () => {
-      const [parts, changes, records] = await Promise.all([
+      const [parts, events, records] = await Promise.all([
         listParts(carId, true),
-        lastChangesForCar(carId),
+        partEventsForCar(carId),
         listRecords(carId),
       ]);
       if (cancelled) return;
       const mileage = effectiveMileage(carMileage, records);
       const today = todayIso();
       const baseline = baselineForCar({ year: carYear });
+      const histories = summarizePartEvents(events);
       setItems(
         parts.map((part) => ({
           part,
-          resource: calculateResource(part, changes[part.id] ?? null, mileage, today, baseline),
+          resource: resourceForPart(part, histories[part.id], mileage, today, baseline),
         })),
       );
       setLoading(false);
@@ -108,64 +109,8 @@ export default function PartsScreen() {
     [t],
   );
 
-  /**
-   * Подпись под названием — остаток ресурса словами. Для просрочки показываем
-   * километровое число (со знаком минус при перепробеге) и слово «просрочено»:
-   * цвет здесь означает худшее из двух ограничений, а число — всегда километровое.
-   *
-   * Прочерк остаётся только у `no-data` — когда у детали не задан ни один интервал и
-   * считать попросту нечего. Ресурс, посчитанный от начала жизни машины, показывает
-   * обычные числа и тон по статусу, а допущение выдаёт приписка «нет данных».
-   */
   const describe = useCallback(
-    (resource: Resource): Subtitle => {
-      const { status, kmLeft, monthsLeft, assumed } = resource;
-      if (status === 'no-data') return { text: t('parts.noData'), tone: 'tertiary' };
-      if (assumed) {
-        const tone: TextTone =
-          status === 'overdue' ? 'danger' : status === 'warn' ? 'warn' : 'secondary';
-        // Одно число вместо двух: третьим сегментом строка перестаёт читаться.
-        const value =
-          kmLeft != null
-            ? t('parts.remainingKm', { km: formatSigned(kmLeft, language) })
-            : monthsLeft != null
-              ? t('parts.remainingMonths', { months: formatSigned(monthsLeft, language) })
-              : null;
-        if (value === null) return { text: t('parts.noData'), tone: 'tertiary' };
-        return { text: t('parts.assumed', { value }), tone };
-      }
-      if (status === 'overdue') {
-        return {
-          text:
-            kmLeft != null
-              ? t('parts.overdueKm', { km: formatSigned(kmLeft, language) })
-              : monthsLeft != null
-                ? t('parts.overdueMonths', { months: formatSigned(monthsLeft, language) })
-                : t('parts.overdue'),
-          tone: 'danger',
-        };
-      }
-      const tone: TextTone = status === 'warn' ? 'warn' : 'secondary';
-      if (kmLeft != null && monthsLeft != null) {
-        return {
-          text: t('parts.remaining', {
-            km: formatNumber(kmLeft, language),
-            months: formatNumber(monthsLeft, language),
-          }),
-          tone,
-        };
-      }
-      if (kmLeft != null) {
-        return { text: t('parts.remainingKm', { km: formatNumber(kmLeft, language) }), tone };
-      }
-      if (monthsLeft != null) {
-        return {
-          text: t('parts.remainingMonths', { months: formatNumber(monthsLeft, language) }),
-          tone,
-        };
-      }
-      return { text: t('parts.noData'), tone: 'tertiary' };
-    },
+    (resource: Resource) => describeResource(resource, language, t),
     [language, t],
   );
 
@@ -181,7 +126,11 @@ export default function PartsScreen() {
     for (const item of items) {
       if (item.part.pinned) {
         pinnedRows.push(item);
-      } else if (item.resource.status === 'overdue' || item.resource.status === 'warn') {
+      } else if (
+        item.resource.status === 'overdue' ||
+        item.resource.status === 'inspect' ||
+        item.resource.status === 'warn'
+      ) {
         attentionRows.push(item);
       } else {
         rest.push(item);
@@ -297,32 +246,14 @@ export default function PartsScreen() {
         </ScrollView>
       )}
 
-      <BottomSheet
+      <CarPickerSheet
         visible={carSheetVisible}
         onClose={() => setCarSheetVisible(false)}
-        title={t('common.selectCar')}
-      >
-        <View style={styles.carList}>
-          {cars.map((car) => (
-            <Pressable
-              key={car.id}
-              accessibilityRole="button"
-              onPress={() => {
-                setActiveCar(car.id);
-                setCarSheetVisible(false);
-              }}
-              style={({ pressed }) => [styles.carRow, { opacity: pressed ? 0.7 : 1 }]}
-            >
-              <AppText variant="bodyMedium" numberOfLines={1} style={styles.carName}>
-                {carTitle(car)}
-              </AppText>
-              {car.id === activeCar?.id ? (
-                <Check size={sizes.iconMd} color={colors.accent} />
-              ) : null}
-            </Pressable>
-          ))}
-        </View>
-      </BottomSheet>
+        cars={cars}
+        activeCarId={activeCar?.id ?? null}
+        onSelect={setActiveCar}
+        onAddCar={() => navigation.navigate('CarForm')}
+      />
     </View>
   );
 }
@@ -357,19 +288,5 @@ const styles = StyleSheet.create({
   },
   centered: {
     textAlign: 'center',
-  },
-  carList: {
-    paddingBottom: spacing.sm,
-  },
-  carRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.md,
-    justifyContent: 'space-between',
-    paddingHorizontal: layout.sheet.paddingHorizontal,
-    paddingVertical: spacing.md,
-  },
-  carName: {
-    flexShrink: 1,
   },
 });

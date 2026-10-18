@@ -14,6 +14,15 @@ import type { CategoryKey, FuelType, ReplacementScope, Transmission } from '../d
  * не нужны, и владелец перестанет верить остальным напоминаниям. Поэтому такие позиции
  * заводятся без интервалов: они лежат в каталоге выключенными, и их можно включить, чтобы
  * просто вести историю и расходы.
+ *
+ * Зато у многих таких деталей есть регламент ОСМОТРА: «проверить при каждом ТО». Для них
+ * заведён отдельный интервал проверки — он не требует замены, а напоминает посмотреть.
+ * Особенно это выручает у `each`: общий счётчик замены им бессмыслен, а осматривают все
+ * четыре пыльника разом, так что один счётчик проверки на всех честен.
+ *
+ * В каталоге лежат и регулярные работы, где ничего не меняется физически, — чистка
+ * дросселя, развал-схождение, обслуживание кондиционера. Им нужен тот же счётчик,
+ * что и деталям, а услуга в записи ТО счётчика не ведёт.
  */
 
 /**
@@ -27,6 +36,12 @@ export interface CatalogEntry {
   intervalKm: number | null;
   intervalMonths: number | null;
   scope: ReplacementScope;
+  /** Интервал проверки; не указан — регламента осмотра нет. */
+  inspectKm?: number;
+  inspectMonths?: number;
+  /** Толщина новой детали и предел замены, мм, — для расчёта ресурса по замеру. */
+  wearNew?: number;
+  wearMin?: number;
   /** Если не указано — подходит любому типу топлива. */
   fuel?: FuelType[];
   /** Если не указано — подходит любой коробке. */
@@ -43,7 +58,8 @@ export const CATALOG: CatalogEntry[] = [
   // Свечей 3–6, но снимают и меняют всегда все разом.
   { key: 'spark-plugs', category: 'engine', intervalKm: 60_000, intervalMonths: null, scope: 'set', fuel: PETROL },
   { key: 'timing-belt', category: 'engine', intervalKm: 90_000, intervalMonths: 72, scope: 'set', fuel: ICE },
-  { key: 'accessory-belt', category: 'engine', intervalKm: 90_000, intervalMonths: 60, scope: 'single', fuel: ICE },
+  // Ремень меняют по сроку, но трещины на нём ищут каждые пару лет.
+  { key: 'accessory-belt', category: 'engine', intervalKm: 90_000, intervalMonths: 60, scope: 'single', inspectKm: 30_000, inspectMonths: 24, fuel: ICE },
   { key: 'pcv-valve', category: 'engine', intervalKm: 80_000, intervalMonths: null, scope: 'single', fuel: ICE },
   // Ниже — без регламента: меняют по отказу или по диагностике.
   { key: 'glow-plugs', category: 'engine', intervalKm: null, intervalMonths: null, scope: 'set', fuel: ['diesel'] },
@@ -65,27 +81,31 @@ export const CATALOG: CatalogEntry[] = [
   { key: 'fuel-filter-petrol', category: 'fuel', intervalKm: 60_000, intervalMonths: null, scope: 'single', fuel: PETROL },
   { key: 'fuel-pump-strainer', category: 'fuel', intervalKm: null, intervalMonths: null, scope: 'single', fuel: ICE },
   { key: 'injectors-cleaning', category: 'fuel', intervalKm: null, intervalMonths: null, scope: 'set', fuel: ICE },
-  { key: 'throttle-cleaning', category: 'fuel', intervalKm: null, intervalMonths: null, scope: 'single', fuel: ICE },
+  // Регламента у производителей нет, но на деле дроссель чистят регулярно — иначе плывут обороты.
+  { key: 'throttle-cleaning', category: 'fuel', intervalKm: 30_000, intervalMonths: null, scope: 'single', fuel: ICE },
 
   // ── Трансмиссия ──────────────────────────────────────────────────────────
   { key: 'atf-and-filter', category: 'transmission', intervalKm: 60_000, intervalMonths: 96, scope: 'set', transmission: ['automatic'] },
   { key: 'manual-gearbox-oil', category: 'transmission', intervalKm: 80_000, intervalMonths: null, scope: 'single', transmission: ['manual'] },
   { key: 'clutch-kit', category: 'transmission', intervalKm: null, intervalMonths: null, scope: 'set', transmission: ['manual'] },
   // Пыльников и ШРУСов по четыре, рвутся поодиночке — общий счётчик им противопоказан.
-  { key: 'cv-boots', category: 'transmission', intervalKm: null, intervalMonths: null, scope: 'each' },
+  // Но осматривают их все разом при каждом ТО: порванный пыльник за сезон убивает ШРУС.
+  { key: 'cv-boots', category: 'transmission', intervalKm: null, intervalMonths: null, scope: 'each', inspectKm: 15_000, inspectMonths: 12 },
   { key: 'cv-joints', category: 'transmission', intervalKm: null, intervalMonths: null, scope: 'each' },
   // Отдельного редуктора у переднеприводной машины нет; тип привода в модели пока не задаётся.
   { key: 'differential-oil', category: 'transmission', intervalKm: null, intervalMonths: null, scope: 'single' },
 
   // ── Тормозная система ────────────────────────────────────────────────────
-  { key: 'front-brake-pads', category: 'brakes', intervalKm: 40_000, intervalMonths: null, scope: 'axle' },
-  { key: 'rear-brake-pads', category: 'brakes', intervalKm: 70_000, intervalMonths: null, scope: 'axle' },
+  // Колодки — главный кандидат на замер: толщина накладки прямо говорит, сколько им осталось.
+  { key: 'front-brake-pads', category: 'brakes', intervalKm: 40_000, intervalMonths: null, scope: 'axle', inspectKm: 15_000, inspectMonths: 12, wearNew: 12, wearMin: 3 },
+  { key: 'rear-brake-pads', category: 'brakes', intervalKm: 70_000, intervalMonths: null, scope: 'axle', inspectKm: 15_000, inspectMonths: 12, wearNew: 10, wearMin: 3 },
   { key: 'front-brake-discs', category: 'brakes', intervalKm: 90_000, intervalMonths: null, scope: 'axle' },
   { key: 'rear-brake-discs', category: 'brakes', intervalKm: 120_000, intervalMonths: null, scope: 'axle' },
   // Единственная позиция, где срок диктует календарь: жидкость набирает влагу из воздуха.
   { key: 'brake-fluid', category: 'brakes', intervalKm: null, intervalMonths: 24, scope: 'single' },
-  { key: 'caliper-grease', category: 'brakes', intervalKm: null, intervalMonths: null, scope: 'axle' },
-  { key: 'brake-hoses', category: 'brakes', intervalKm: null, intervalMonths: null, scope: 'each' },
+  // Направляющие закисают от соли и влаги — их обслуживают по календарю, а не по пробегу.
+  { key: 'caliper-grease', category: 'brakes', intervalKm: null, intervalMonths: 24, scope: 'axle' },
+  { key: 'brake-hoses', category: 'brakes', intervalKm: null, intervalMonths: null, scope: 'each', inspectMonths: 24 },
   { key: 'parking-brake-shoes', category: 'brakes', intervalKm: null, intervalMonths: null, scope: 'axle' },
 
   // ── Подвеска и рулевое ───────────────────────────────────────────────────
@@ -97,42 +117,63 @@ export const CATALOG: CatalogEntry[] = [
   { key: 'strut-mounts', category: 'suspension', intervalKm: null, intervalMonths: null, scope: 'axle' },
   { key: 'springs', category: 'suspension', intervalKm: null, intervalMonths: null, scope: 'axle' },
   { key: 'stabilizer-bushings', category: 'suspension', intervalKm: null, intervalMonths: null, scope: 'axle' },
-  { key: 'control-arm-bushings', category: 'suspension', intervalKm: null, intervalMonths: null, scope: 'each' },
-  { key: 'ball-joints', category: 'suspension', intervalKm: null, intervalMonths: null, scope: 'each' },
+  // Люфты и порванные пыльники ловятся только осмотром на подъёмнике — его и напоминаем.
+  { key: 'control-arm-bushings', category: 'suspension', intervalKm: null, intervalMonths: null, scope: 'each', inspectKm: 30_000 },
+  { key: 'ball-joints', category: 'suspension', intervalKm: null, intervalMonths: null, scope: 'each', inspectKm: 30_000 },
   { key: 'wheel-bearings', category: 'suspension', intervalKm: null, intervalMonths: null, scope: 'each' },
-  { key: 'tie-rod-ends', category: 'suspension', intervalKm: null, intervalMonths: null, scope: 'each' },
+  { key: 'tie-rod-ends', category: 'suspension', intervalKm: null, intervalMonths: null, scope: 'each', inspectKm: 30_000 },
   { key: 'tie-rods', category: 'suspension', intervalKm: null, intervalMonths: null, scope: 'each' },
   // На машинах с электроусилителем этой жидкости нет вовсе.
   { key: 'power-steering-fluid', category: 'suspension', intervalKm: null, intervalMonths: null, scope: 'single' },
 
   // ── Электрика ────────────────────────────────────────────────────────────
   // Аккумулятор умирает от календаря и жары; пробег с его ресурсом не связан.
-  { key: 'battery', category: 'electrical', intervalKm: null, intervalMonths: 48, scope: 'single' },
+  // Нагрузочную вилку — раз в год, перед зимой: севший на морозе аккумулятор не заведёт.
+  { key: 'battery', category: 'electrical', intervalKm: null, intervalMonths: 48, scope: 'single', inspectMonths: 12 },
   { key: 'low-beam-bulbs', category: 'electrical', intervalKm: null, intervalMonths: null, scope: 'each' },
   { key: 'alternator', category: 'electrical', intervalKm: null, intervalMonths: null, scope: 'single', fuel: ICE },
   { key: 'starter', category: 'electrical', intervalKm: null, intervalMonths: null, scope: 'single', fuel: ICE },
 
   // ── Салон и кузов ────────────────────────────────────────────────────────
   { key: 'cabin-filter', category: 'interior', intervalKm: 15_000, intervalMonths: 12, scope: 'single' },
-  // Щётки убивают ультрафиолет и мороз, а не километры; передняя пара меняется вместе.
-  { key: 'wiper-blades', category: 'interior', intervalKm: null, intervalMonths: 12, scope: 'set' },
-  { key: 'rust-proofing', category: 'interior', intervalKm: null, intervalMonths: 12, scope: 'single' },
+  // Щётки убивают ультрафиолет и мороз, а не километры, но и они могут прослужить не один
+  // сезон — поэтому раз в год проверяем, а меняем по состоянию. Передняя пара меняется вместе.
+  { key: 'wiper-blades', category: 'interior', intervalKm: null, intervalMonths: null, scope: 'set', inspectMonths: 12 },
+  // Кондиционер: заправка с проверкой герметичности и антибактериальная чистка — разные ритмы.
+  { key: 'ac-service', category: 'interior', intervalKm: null, intervalMonths: 24, scope: 'single' },
+  { key: 'ac-disinfection', category: 'interior', intervalKm: null, intervalMonths: 12, scope: 'single' },
 
   // ── Шины и колёса ────────────────────────────────────────────────────────
   // У сезонного комплекта пробег заведомо врёт: машина полгода ездит на другом.
   // Поэтому у шин только возраст, а износ ловится перестановкой — её и считаем в километрах.
+  // Протектор меряют при сезонной смене. Пределы — законные минимумы в РФ: 1,6 мм у
+  // летних и 4 мм у зимних; новые — типичная глубина рисунка.
   { key: 'tire-rotation', category: 'wheels', intervalKm: 10_000, intervalMonths: null, scope: 'set' },
-  { key: 'summer-tires', category: 'wheels', intervalKm: null, intervalMonths: 96, scope: 'set' },
-  { key: 'winter-tires', category: 'wheels', intervalKm: null, intervalMonths: 72, scope: 'set' },
+  { key: 'summer-tires', category: 'wheels', intervalKm: null, intervalMonths: 96, scope: 'set', inspectMonths: 12, wearNew: 8, wearMin: 1.6 },
+  { key: 'winter-tires', category: 'wheels', intervalKm: null, intervalMonths: 72, scope: 'set', inspectMonths: 12, wearNew: 9, wearMin: 4 },
+  // Геометрию сбивают ямы, а не километры, поэтому раз в год — даже если ездили мало.
+  { key: 'wheel-alignment', category: 'wheels', intervalKm: 20_000, intervalMonths: 12, scope: 'single' },
 ];
 
+interface Intervals {
+  intervalKm: number | null;
+  intervalMonths: number | null;
+  inspectKm?: number | null;
+  inspectMonths?: number | null;
+}
+
 /**
- * Есть ли у детали срок жизни. Деталь без интервалов отслеживать нечем — ресурс не
- * посчитать, — поэтому в списке она заводится выключенной и живёт в каталоге, пока
- * пользователь сам не включит её показ.
+ * Есть ли у детали хоть какой-то срок — замены или проверки. Деталь без интервалов
+ * отслеживать нечем, поэтому в списке она заводится выключенной и живёт в каталоге,
+ * пока пользователь сам не включит её показ.
  */
-export function hasInterval(entry: Pick<CatalogEntry, 'intervalKm' | 'intervalMonths'>): boolean {
-  return entry.intervalKm != null || entry.intervalMonths != null;
+export function hasInterval(entry: Intervals): boolean {
+  return (
+    entry.intervalKm != null ||
+    entry.intervalMonths != null ||
+    entry.inspectKm != null ||
+    entry.inspectMonths != null
+  );
 }
 
 /**
@@ -141,12 +182,21 @@ export function hasInterval(entry: Pick<CatalogEntry, 'intervalKm' | 'intervalMo
  * Временной интервал переводим в километры по грубой оценке 1000 км в месяц, иначе
  * детали вроде салонного фильтра или тормозной жидкости, у которых срок диктует время,
  * оказались бы рядом с деталями на сто тысяч пробега.
+ *
+ * Деталь, которую не меняют, а только осматривают, встаёт по частоте осмотра — иначе
+ * пыльники, которые смотрят каждое ТО, уехали бы в самый конец.
  */
-export function replacementRank(entry: Pick<CatalogEntry, 'intervalKm' | 'intervalMonths'>): number {
-  const byKm = entry.intervalKm ?? Number.POSITIVE_INFINITY;
-  const byMonths =
-    entry.intervalMonths != null ? entry.intervalMonths * 1000 : Number.POSITIVE_INFINITY;
+function rank(km: number | null | undefined, months: number | null | undefined): number {
+  const byKm = km ?? Number.POSITIVE_INFINITY;
+  const byMonths = months != null ? months * 1000 : Number.POSITIVE_INFINITY;
   return Math.min(byKm, byMonths);
+}
+
+export function replacementRank(entry: Intervals): number {
+  const byReplacement = rank(entry.intervalKm, entry.intervalMonths);
+  return Number.isFinite(byReplacement)
+    ? byReplacement
+    : rank(entry.inspectKm, entry.inspectMonths);
 }
 
 /** Каталог в порядке убывания частоты замены — именно он определяет порядок в списках. */
@@ -184,24 +234,23 @@ export function inapplicableReason(entry: CatalogEntry): string | null {
   return null;
 }
 
-/** Частые услуги — подсказки при вводе, справочником не являются. */
+/**
+ * Частые услуги — подсказки при вводе, справочником не являются. Развал-схождение и
+ * кондиционер отсюда ушли в каталог: у них есть ритм, и счётчик им нужен, как детали.
+ */
 export const COMMON_SERVICES = [
   'oil-change-labour',
   'diagnostics',
-  'wheel-alignment',
   'tire-fitting',
   'balancing',
   'car-wash',
-  'ac-recharge',
 ] as const;
 
 /** Категория по умолчанию для подсказанной услуги. */
 export const COMMON_SERVICE_CATEGORY: Record<string, CategoryKey> = {
   'oil-change-labour': 'engine',
   diagnostics: 'engine',
-  'wheel-alignment': 'suspension',
   'tire-fitting': 'wheels',
   balancing: 'wheels',
   'car-wash': 'interior',
-  'ac-recharge': 'interior',
 };

@@ -2,7 +2,11 @@ import {
   calculateResource,
   calculateNextService,
   baselineForCar,
+  byUrgency,
+  NO_DATA,
+  summarizePartEvents,
   WARN_THRESHOLD,
+  type Resource,
 } from './resource';
 
 const TODAY = '2025-03-12';
@@ -170,5 +174,238 @@ describe('calculateNextService', () => {
     expect(next!.status).toBe('overdue');
     // Отсчёт от нулевого пробега, поэтому срок ТО наступил ещё на десяти тысячах.
     expect(next!.dueAtMileage).toBe(10_000);
+  });
+});
+
+describe('проверка', () => {
+  const pads = {
+    intervalKm: 40_000,
+    intervalMonths: null,
+    inspectKm: 15_000,
+    inspectMonths: 12,
+  };
+
+  it('красит деталь в «пора проверить», когда вышел срок осмотра, а замена ещё не нужна', () => {
+    const r = calculateResource(
+      pads,
+      { mileage: 130_000, date: '2024-01-10' },
+      148_000,
+      TODAY,
+      BASELINE,
+    );
+    // До замены ещё 22 000 км, но со дня замены прошло больше года — пора посмотреть.
+    expect(r.kmLeft).toBe(22_000);
+    expect(r.inspection?.due).toBe(true);
+    expect(r.status).toBe('inspect');
+  });
+
+  it('отсчитывает проверку от последнего осмотра, а замену — от замены', () => {
+    const r = calculateResource(
+      pads,
+      { mileage: 120_000, date: '2023-06-01' },
+      148_000,
+      TODAY,
+      BASELINE,
+      { lastInspection: { mileage: 140_000, date: '2025-01-15' } },
+    );
+    expect(r.kmLeft).toBe(12_000);
+    expect(r.inspection?.kmLeft).toBe(7_000);
+    expect(r.inspection?.due).toBe(false);
+    expect(r.status).toBe('ok');
+  });
+
+  it('считает замену заодно и осмотром', () => {
+    const r = calculateResource(
+      pads,
+      { mileage: 145_000, date: '2025-02-01' },
+      148_000,
+      TODAY,
+      BASELINE,
+      { lastInspection: { mileage: 100_000, date: '2022-01-01' } },
+    );
+    expect(r.inspection?.kmLeft).toBe(12_000);
+    expect(r.status).toBe('ok');
+  });
+
+  it('оставляет просрочку замены красной, даже если и осмотр пропущен', () => {
+    const r = calculateResource(
+      pads,
+      { mileage: 100_000, date: '2022-01-01' },
+      148_000,
+      TODAY,
+      BASELINE,
+    );
+    expect(r.status).toBe('overdue');
+  });
+
+  it('строит кольцо по сроку проверки у детали, которую только осматривают', () => {
+    const r = calculateResource(
+      { intervalKm: null, intervalMonths: null, inspectKm: 15_000, inspectMonths: null },
+      null,
+      148_000,
+      TODAY,
+      BASELINE,
+      { lastInspection: { mileage: 144_250, date: '2025-01-01' } },
+    );
+    expect(r.basis).toBe('inspection');
+    expect(r.value).toBe(75);
+    expect(r.kmLeft).toBeNull();
+    expect(r.assumed).toBe(false);
+    // «Скоро менять» у такой детали не бывает — менять её по сроку никто не просил.
+    const almost = calculateResource(
+      { intervalKm: null, intervalMonths: null, inspectKm: 15_000, inspectMonths: null },
+      null,
+      148_000,
+      TODAY,
+      BASELINE,
+      { lastInspection: { mileage: 134_000, date: '2025-01-01' } },
+    );
+    expect(almost.status).toBe('ok');
+  });
+
+  it('считает неосмотренную деталь просроченной к проверке от начала жизни машины', () => {
+    const r = calculateResource(
+      { intervalKm: null, intervalMonths: null, inspectKm: 15_000, inspectMonths: null },
+      null,
+      148_000,
+      TODAY,
+      BASELINE,
+    );
+    expect(r.status).toBe('inspect');
+    expect(r.assumed).toBe(true);
+  });
+});
+
+describe('замер износа', () => {
+  const pads = {
+    intervalKm: 40_000,
+    intervalMonths: null,
+    inspectKm: 15_000,
+    inspectMonths: null,
+    wearNew: 12,
+    wearMin: 3,
+  };
+
+  it('считает скорость износа по паре «замена → замер» и экстраполирует на сегодня', () => {
+    // 12 → 9 мм за 30 000 км: 0,1 мм на тысячу; ещё 5 000 км — минус полмиллиметра.
+    const r = calculateResource(
+      pads,
+      { mileage: 100_000, date: '2023-01-01' },
+      135_000,
+      TODAY,
+      BASELINE,
+      { measurement: { mileage: 130_000, date: '2025-01-01', value: 9 } },
+    );
+    expect(r.basis).toBe('wear');
+    expect(r.wear?.estimated).toBeCloseTo(8.5);
+    expect(r.wear?.extrapolated).toBe(true);
+    expect(r.kmLeft).toBe(55_000);
+    expect(r.value).toBe(61);
+    // По интервалу деталь была бы почти выработана, но замер честнее.
+    expect(r.status).toBe('ok');
+  });
+
+  it('берёт скорость из интервала, когда замена неизвестна', () => {
+    const r = calculateResource(
+      pads,
+      null,
+      140_000,
+      TODAY,
+      BASELINE,
+      { measurement: { mileage: 140_000, date: '2025-03-01', value: 7.5 } },
+    );
+    // 9 мм ресурса на 40 000 км: остаток 4,5 мм — это 20 000 км.
+    expect(r.kmLeft).toBe(20_000);
+    expect(r.value).toBe(50);
+    expect(r.assumed).toBe(false);
+  });
+
+  it('объявляет просрочку, когда оценка опустилась до предела', () => {
+    const r = calculateResource(
+      pads,
+      { mileage: 100_000, date: '2023-01-01' },
+      150_000,
+      TODAY,
+      BASELINE,
+      { measurement: { mileage: 130_000, date: '2025-01-01', value: 4 } },
+    );
+    expect(r.wear?.estimated).toBeLessThanOrEqual(3);
+    expect(r.status).toBe('overdue');
+  });
+
+  it('не верит замеру, сделанному до последней замены', () => {
+    const r = calculateResource(
+      pads,
+      { mileage: 140_000, date: '2025-02-01' },
+      141_000,
+      TODAY,
+      BASELINE,
+      { measurement: { mileage: 130_000, date: '2025-01-01', value: 3.5 } },
+    );
+    expect(r.basis).toBe('km');
+    expect(r.wear).toBeNull();
+  });
+
+  it('у шин держит в силе срок по возрасту, даже когда протектор в порядке', () => {
+    const r = calculateResource(
+      { intervalKm: null, intervalMonths: 72, wearNew: 9, wearMin: 4, inspectMonths: 12 },
+      { mileage: 20_000, date: '2017-10-01' },
+      148_000,
+      TODAY,
+      BASELINE,
+      { measurement: { mileage: 147_000, date: '2024-11-01', value: 7 } },
+    );
+    expect(r.basis).toBe('wear');
+    expect(r.status).toBe('overdue');
+    expect(r.monthsLeft).toBeLessThan(0);
+  });
+});
+
+describe('summarizePartEvents', () => {
+  it('раскладывает действия на последнюю замену, проверку и свежий замер', () => {
+    const summary = summarizePartEvents([
+      { partId: 'p', action: 'replace', mileage: 100_000, date: '2023-01-01', measurement: null },
+      { partId: 'p', action: 'inspect', mileage: 120_000, date: '2024-01-01', measurement: 10 },
+      { partId: 'p', action: 'inspect', mileage: 130_000, date: '2024-09-01', measurement: 9 },
+      { partId: 'p', action: 'inspect', mileage: 135_000, date: '2025-01-01', measurement: null },
+    ]);
+    expect(summary.p.lastChange).toEqual({ mileage: 100_000, date: '2023-01-01' });
+    expect(summary.p.lastInspection).toEqual({ mileage: 135_000, date: '2025-01-01' });
+    expect(summary.p.measurement).toEqual({ mileage: 130_000, date: '2024-09-01', value: 9 });
+  });
+
+  it('забывает замер старой детали после замены', () => {
+    const summary = summarizePartEvents([
+      { partId: 'p', action: 'inspect', mileage: 120_000, date: '2024-01-01', measurement: 4 },
+      { partId: 'p', action: 'replace', mileage: 125_000, date: '2024-03-01', measurement: null },
+    ]);
+    expect(summary.p.measurement).toBeNull();
+  });
+});
+
+describe('byUrgency', () => {
+  it('ставит просрочку перед проверкой, проверку — перед «скоро менять»', () => {
+    const make = (status: Resource['status'], value: number | null): Resource => ({
+      ...NO_DATA,
+      status,
+      value,
+    });
+    const sorted = [
+      make('ok', 80),
+      make('no-data', null),
+      make('warn', 10),
+      make('inspect', 60),
+      make('overdue', 0),
+      make('ok', 40),
+    ].sort(byUrgency);
+    expect(sorted.map((r) => r.status)).toEqual([
+      'overdue',
+      'inspect',
+      'warn',
+      'ok',
+      'ok',
+      'no-data',
+    ]);
+    expect(sorted[3].value).toBe(40);
   });
 });

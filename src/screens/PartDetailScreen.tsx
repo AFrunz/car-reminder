@@ -12,7 +12,7 @@ import { useNavigation, useRoute, type RouteProp } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
-import { Pencil, Star, StarOff } from 'lucide-react-native';
+import { ClipboardCheck, Pencil, Star } from 'lucide-react-native';
 import {
   AppBar,
   AppText,
@@ -22,6 +22,7 @@ import {
   Donut,
   Field,
   MonoText,
+  OutlineButton,
   PrimaryButton,
 } from '../ui';
 import type { TextTone } from '../ui';
@@ -43,38 +44,54 @@ import {
   getCar,
   getPart,
   historyForPart,
-  lastChangeForPart,
   listRecords,
+  partEvents,
   todayIso,
   updatePart,
+  type PartHistoryEntry,
 } from '../db/repositories';
-import { baselineForCar, calculateResource, NO_DATA, type Resource } from '../domain/resource';
+import {
+  baselineForCar,
+  NO_DATA,
+  resourceForPart,
+  summarizePartEvents,
+  type InspectionState,
+  type Resource,
+} from '../domain/resource';
 import { effectiveMileage } from '../domain/validation';
 import type { Part } from '../domain/types';
-import { formatDate, formatNumber, parseNumberInput } from '../lib/format';
+import {
+  formatDate,
+  formatDecimal,
+  formatNumber,
+  parseDecimalInput,
+  parseNumberInput,
+} from '../lib/format';
 import type { Language } from '../i18n';
 
 /**
  * Карточка детали: состояние ресурса, редактируемые название и интервалы, история замен
- * и скрытие детали. Кнопки «заменить сейчас» здесь нет — замена фиксируется только
- * записью ТО, поэтому единственный способ обнулить счётчик проходит через историю.
+ * и проверок и скрытие детали. Кнопки «заменить сейчас» здесь нет — замена фиксируется
+ * только записью ТО, поэтому единственный способ обнулить счётчик проходит через историю.
+ * Проверка — тоже запись ТО; кнопка «Записать проверку» лишь открывает её заполненной.
  */
-
-interface HistoryEntry {
-  recordId: string;
-  mileage: number;
-  date: string;
-  cost: number | null;
-  /** Свободная пометка из позиции записи ТО: модель, артикул, что угодно. */
-  note: string | null;
-}
 
 /** Всё, что экран читает из базы за один проход, — чтобы не мигать полупустым состоянием. */
 interface PartDetailData {
   part: Part;
   resource: Resource;
-  history: HistoryEntry[];
+  history: PartHistoryEntry[];
 }
+
+/** Износ задан, только когда есть оба края и новая деталь толще предела. */
+const hasWearSpec = (part: Part): boolean =>
+  part.wearNew != null && part.wearMin != null && part.wearNew > part.wearMin;
+
+const hasInspection = (part: Part): boolean =>
+  part.inspectKm != null || part.inspectMonths != null;
+
+/** Значение для поля ввода: пусто, если не задано. */
+const draft = (value: number | null): string => (value == null ? '' : String(value));
 
 type DetailRoute = RouteProp<RootStackParamList, 'PartDetail'>;
 type DetailNavigation = NativeStackNavigationProp<RootStackParamList, 'PartDetail'>;
@@ -99,6 +116,11 @@ export default function PartDetailScreen() {
   const [intervalSheetOpen, setIntervalSheetOpen] = useState(false);
   const [kmDraft, setKmDraft] = useState('');
   const [monthsDraft, setMonthsDraft] = useState('');
+  const [inspectKmDraft, setInspectKmDraft] = useState('');
+  const [inspectMonthsDraft, setInspectMonthsDraft] = useState('');
+  const [wearNewDraft, setWearNewDraft] = useState('');
+  const [wearMinDraft, setWearMinDraft] = useState('');
+  const [intervalError, setIntervalError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,15 +130,21 @@ export default function PartDetailScreen() {
         if (!cancelled) setData(null);
         return;
       }
-      const [lastChange, records, history, car] = await Promise.all([
-        lastChangeForPart(partId),
+      const [events, records, history, car] = await Promise.all([
+        partEvents(partId),
         listRecords(part.carId),
         historyForPart(partId),
         getCar(part.carId),
       ]);
       const mileage = effectiveMileage(car?.mileage ?? 0, records);
       const resource = car
-        ? calculateResource(part, lastChange, mileage, todayIso(), baselineForCar(car))
+        ? resourceForPart(
+            part,
+            summarizePartEvents(events)[partId],
+            mileage,
+            todayIso(),
+            baselineForCar(car),
+          )
         : NO_DATA;
       if (!cancelled) setData({ part, resource, history });
     })();
@@ -156,22 +184,55 @@ export default function PartDetailScreen() {
   }, [nameDraft, partId, refresh, t]);
 
   const openIntervalSheet = useCallback(() => {
-    setKmDraft(part?.intervalKm == null ? '' : String(part.intervalKm));
-    setMonthsDraft(part?.intervalMonths == null ? '' : String(part.intervalMonths));
+    if (part === null) return;
+    setKmDraft(draft(part.intervalKm));
+    setMonthsDraft(draft(part.intervalMonths));
+    setInspectKmDraft(draft(part.inspectKm));
+    setInspectMonthsDraft(draft(part.inspectMonths));
+    setWearNewDraft(part.wearNew == null ? '' : formatDecimal(part.wearNew, language));
+    setWearMinDraft(part.wearMin == null ? '' : formatDecimal(part.wearMin, language));
+    setIntervalError(null);
     setIntervalSheetOpen(true);
-  }, [part]);
+  }, [language, part]);
 
   const saveIntervals = useCallback(() => {
-    // Оба поля можно очистить: деталь, которую меняют по состоянию, живёт без интервалов —
+    // Любое поле можно очистить: деталь, которую меняют по состоянию, живёт без интервалов —
     // ресурс у неё просто станет «нет данных».
     const intervalKm = parseNumberInput(kmDraft);
     const intervalMonths = parseNumberInput(monthsDraft);
+    const inspectKm = parseNumberInput(inspectKmDraft);
+    const inspectMonths = parseNumberInput(inspectMonthsDraft);
+    const wearNew = parseDecimalInput(wearNewDraft);
+    const wearMin = parseDecimalInput(wearMinDraft);
+    // Износ осмыслен только парой: без одного из краёв шкалы процент не посчитать.
+    const wearCleared = wearNew === null && wearMin === null;
+    if (!wearCleared && (wearNew === null || wearMin === null || wearNew <= wearMin)) {
+      setIntervalError(t('partDetail.wearInvalid'));
+      return;
+    }
     void (async () => {
-      await updatePart(partId, { intervalKm, intervalMonths });
+      await updatePart(partId, {
+        intervalKm,
+        intervalMonths,
+        inspectKm,
+        inspectMonths,
+        wearNew,
+        wearMin,
+      });
       setIntervalSheetOpen(false);
       refresh();
     })();
-  }, [kmDraft, monthsDraft, partId, refresh]);
+  }, [
+    inspectKmDraft,
+    inspectMonthsDraft,
+    kmDraft,
+    monthsDraft,
+    partId,
+    refresh,
+    t,
+    wearMinDraft,
+    wearNewDraft,
+  ]);
 
   /**
    * Закрепление в избранном. Локальное состояние обновляем сразу, не дожидаясь
@@ -208,6 +269,26 @@ export default function PartDetailScreen() {
 
   const kmLine = describeKm(resource, language, t);
   const monthsLine = describeMonths(resource, language, t);
+  // У детали, которую только осматривают, срок проверки уже стоит крупной строкой.
+  const inspectionLine =
+    resource.inspection && resource.basis !== 'inspection'
+      ? describeInspection(resource.inspection, language, t)
+      : null;
+  const wearLine = resource.wear
+    ? {
+        text: resource.wear.extrapolated
+          ? t('partDetail.wearEstimated', {
+              mm: formatDecimal(resource.wear.measured, language),
+              mileage: formatNumber(resource.wear.mileage, language),
+              estimate: formatDecimal(resource.wear.estimated, language),
+            })
+          : t('partDetail.wearMeasured', {
+              mm: formatDecimal(resource.wear.measured, language),
+              mileage: formatNumber(resource.wear.mileage, language),
+            }),
+      }
+    : null;
+  const lastReplacementIndex = history.findIndex((entry) => entry.action === 'replace');
 
   return (
     <View style={[styles.root, { backgroundColor: colors.bg, paddingTop: insets.top }]}>
@@ -222,10 +303,11 @@ export default function PartDetailScreen() {
               onPress={togglePinned}
               style={({ pressed }) => [styles.pinButton, { opacity: pressed ? 0.7 : 1 }]}
             >
+              {/* Залитая звезда — в избранном, контурная — нет: как везде, где есть избранное. */}
               {part.pinned ? (
-                <Star size={sizes.iconBack} color={colors.accent} />
+                <Star size={sizes.iconBack} color={colors.accent} fill={colors.accent} />
               ) : (
-                <StarOff size={sizes.iconBack} color={colors.textPrimary} />
+                <Star size={sizes.iconBack} color={colors.textPrimary} />
               )}
             </Pressable>
           )
@@ -253,12 +335,34 @@ export default function PartDetailScreen() {
                   {monthsLine.text}
                 </AppText>
               ) : null}
+              {inspectionLine ? (
+                <AppText variant="caption" tone={inspectionLine.tone}>
+                  {inspectionLine.text}
+                </AppText>
+              ) : null}
+              {wearLine ? (
+                <AppText variant="caption" tone="tertiary">
+                  {wearLine.text}
+                </AppText>
+              ) : null}
             </View>
           </View>
 
           {/* Числа настоящие, но посчитаны от начала жизни машины — об этом надо сказать. */}
           {resource.assumed && resource.status !== 'no-data' ? (
-            <Banner tone="info" text={t('partDetail.assumedHint')} />
+            <Banner
+              tone="info"
+              text={
+                resource.basis === 'inspection'
+                  ? t('partDetail.assumedInspectionHint')
+                  : t('partDetail.assumedHint')
+              }
+            />
+          ) : null}
+
+          {/* Износ задан, а замера ещё нет: подсказываем, откуда возьмётся точный расчёт. */}
+          {part !== null && hasWearSpec(part) && resource.wear === null ? (
+            <Banner tone="info" text={t('partDetail.wearHint')} />
           ) : null}
 
           <View style={styles.block}>
@@ -318,6 +422,37 @@ export default function PartDetailScreen() {
             />
           </View>
 
+          <View style={styles.intervals}>
+            <IntervalTile
+              label={t('partDetail.inspection')}
+              value={part === null ? null : formatInspection(part, language, t)}
+              empty={t('common.dash')}
+              onPress={openIntervalSheet}
+            />
+            <IntervalTile
+              label={t('partDetail.wear')}
+              value={
+                part !== null && hasWearSpec(part)
+                  ? t('partDetail.wearRange', {
+                      from: formatDecimal(part.wearNew as number, language),
+                      to: formatDecimal(part.wearMin as number, language),
+                    })
+                  : null
+              }
+              empty={t('common.dash')}
+              onPress={openIntervalSheet}
+            />
+          </View>
+
+          {part !== null && (hasInspection(part) || hasWearSpec(part)) ? (
+            <OutlineButton
+              title={t('partDetail.recordInspection')}
+              icon={ClipboardCheck}
+              fullWidth
+              onPress={() => navigation.navigate('RecordForm', { inspectPartId: partId })}
+            />
+          ) : null}
+
           <View style={styles.block}>
             <AppText variant="sectionLabel">{t('partDetail.changes')}</AppText>
             {history.length === 0 ? (
@@ -338,6 +473,15 @@ export default function PartDetailScreen() {
                       <AppText variant="label" tone="secondary">
                         {formatDate(entry.date, language)}
                       </AppText>
+                      {entry.action === 'inspect' ? (
+                        <AppText variant="label" tone="inspect">
+                          {entry.measurement != null
+                            ? t('records.inspectedMeasured', {
+                                mm: formatDecimal(entry.measurement, language),
+                              })
+                            : t('records.inspected')}
+                        </AppText>
+                      ) : null}
                       {/* Пометка к позиции — модель, артикул; пустую строку не показываем. */}
                       {entry.note?.trim() ? (
                         <AppText
@@ -349,7 +493,7 @@ export default function PartDetailScreen() {
                           {entry.note.trim()}
                         </AppText>
                       ) : null}
-                      {index === 0 ? (
+                      {index === lastReplacementIndex ? (
                         <AppText tone="accent" style={styles.lastChange}>
                           {t('partDetail.lastChange')}
                         </AppText>
@@ -411,6 +555,7 @@ export default function PartDetailScreen() {
         footer={<PrimaryButton fullWidth title={t('common.save')} onPress={saveIntervals} />}
       >
         <View style={styles.sheetBody}>
+          <AppText variant="sectionLabel">{t('partForm.interval')}</AppText>
           <View style={styles.intervalRow}>
             <Field
               style={styles.flex}
@@ -431,6 +576,69 @@ export default function PartDetailScreen() {
               mono
             />
           </View>
+
+          <AppText variant="sectionLabel" style={styles.sheetSection}>
+            {t('partForm.inspectInterval')}
+          </AppText>
+          <View style={styles.intervalRow}>
+            <Field
+              style={styles.flex}
+              label={t('partForm.byMileage')}
+              value={inspectKmDraft}
+              onChangeText={setInspectKmDraft}
+              suffix={t('units.km')}
+              keyboardType="number-pad"
+              mono
+            />
+            <Field
+              style={styles.flex}
+              label={t('partForm.byTime')}
+              value={inspectMonthsDraft}
+              onChangeText={setInspectMonthsDraft}
+              suffix={t('units.months')}
+              keyboardType="number-pad"
+              mono
+            />
+          </View>
+
+          <AppText variant="sectionLabel" style={styles.sheetSection}>
+            {t('partDetail.wear')}
+          </AppText>
+          <View style={styles.intervalRow}>
+            <Field
+              style={styles.flex}
+              label={t('partDetail.wearNew')}
+              value={wearNewDraft}
+              onChangeText={(value) => {
+                setWearNewDraft(value);
+                setIntervalError(null);
+              }}
+              suffix={t('units.mm')}
+              keyboardType="decimal-pad"
+              mono
+            />
+            <Field
+              style={styles.flex}
+              label={t('partDetail.wearMin')}
+              value={wearMinDraft}
+              onChangeText={(value) => {
+                setWearMinDraft(value);
+                setIntervalError(null);
+              }}
+              suffix={t('units.mm')}
+              keyboardType="decimal-pad"
+              mono
+            />
+          </View>
+          {intervalError ? (
+            <AppText variant="caption" tone="danger">
+              {intervalError}
+            </AppText>
+          ) : (
+            <AppText variant="caption" tone="tertiary" style={styles.scopeHint}>
+              {t('partDetail.wearExplain')}
+            </AppText>
+          )}
         </View>
       </BottomSheet>
     </View>
@@ -481,13 +689,66 @@ interface StateLine {
   tone: TextTone;
 }
 
+/** Интервал проверки для плитки: «15 000 км · 12 мес», одна из шкал или ничего. */
+function formatInspection(part: Part, language: Language, t: Translate): string | null {
+  const km =
+    part.inspectKm != null
+      ? t('units.kmValue', { value: formatNumber(part.inspectKm, language) })
+      : null;
+  const months =
+    part.inspectMonths != null ? t('units.monthsValue', { value: part.inspectMonths }) : null;
+  if (km && months) return `${km} · ${months}`;
+  return km ?? months;
+}
+
+/** Сколько осталось до проверки — или что она уже нужна. */
+function describeInspection(
+  inspection: InspectionState,
+  language: Language,
+  t: Translate,
+): StateLine {
+  if (inspection.due) return { text: t('partDetail.inspectDue'), tone: 'inspect' };
+  const { kmLeft, monthsLeft } = inspection;
+  if (kmLeft != null && monthsLeft != null) {
+    return {
+      text: t('partDetail.inspectIn', {
+        km: formatNumber(kmLeft, language),
+        months: formatNumber(monthsLeft, language),
+      }),
+      tone: 'secondary',
+    };
+  }
+  if (kmLeft != null) {
+    return {
+      text: t('parts.inspectInKm', { km: formatNumber(kmLeft, language) }),
+      tone: 'secondary',
+    };
+  }
+  return {
+    text: t('parts.inspectInMonths', { months: formatNumber(monthsLeft ?? 0, language) }),
+    tone: 'secondary',
+  };
+}
+
 /**
  * Крупная строка остатка. Кольцо строится по километрам, если километровый интервал
  * задан, поэтому здесь та же развилка: `basis === 'km'` — километры, иначе месяцы.
+ * Замер износа тоже даёт километры, если скорость износа известна, а у детали, которую
+ * только осматривают, крупной строкой идёт срок проверки.
  */
 function describeKm(resource: Resource, language: Language, t: Translate): StateLine {
   if (resource.status === 'no-data') return { text: t('parts.noData'), tone: 'tertiary' };
-  if (resource.basis === 'km' && resource.kmLeft != null) {
+  if (resource.basis === 'inspection' && resource.inspection) {
+    const line = describeInspection(resource.inspection, language, t);
+    return { ...line, tone: line.tone === 'secondary' ? 'primary' : line.tone };
+  }
+  if (resource.basis === 'wear' && resource.kmLeft == null && resource.wear) {
+    return {
+      text: t('partDetail.wearNow', { mm: formatDecimal(resource.wear.estimated, language) }),
+      tone: resource.status === 'overdue' ? 'danger' : 'primary',
+    };
+  }
+  if ((resource.basis === 'km' || resource.basis === 'wear') && resource.kmLeft != null) {
     if (resource.kmLeft <= 0) {
       return {
         text: t('partDetail.overdueKm', { km: formatNumber(-resource.kmLeft, language) }),
@@ -525,7 +786,8 @@ function describeKm(resource: Resource, language: Language, t: Translate): State
  */
 function describeMonths(resource: Resource, language: Language, t: Translate): StateLine | null {
   if (resource.status === 'no-data') return null;
-  if (resource.basis !== 'km' || resource.monthsLeft == null) return null;
+  if (resource.basis !== 'km' && resource.basis !== 'wear') return null;
+  if (resource.monthsLeft == null) return null;
   if (resource.monthsLeft < 0) {
     return {
       text: t('partDetail.overdueMonths', {
@@ -658,6 +920,9 @@ const styles = StyleSheet.create({
   sheetBody: {
     gap: layout.field.gap,
     paddingHorizontal: layout.sheet.paddingHorizontal,
+  },
+  sheetSection: {
+    paddingTop: spacing.sm,
   },
   intervalRow: {
     flexDirection: 'row',

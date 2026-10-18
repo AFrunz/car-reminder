@@ -13,7 +13,11 @@ export type RootStackParamList = {
   PartsCatalog: undefined;
   /** Без partId — создание своей запчасти, с ним — редактирование. */
   PartForm: { partId?: string } | undefined;
-  RecordForm: { recordId?: string } | undefined;
+  /**
+   * Без recordId — новая запись. `inspectPartId` открывает новую запись с этой деталью,
+   * уже отмеченной как проверка, — так проверку записывают прямо из карточки детали.
+   */
+  RecordForm: { recordId?: string; inspectPartId?: string } | undefined;
   CarForm: { carId?: string } | undefined;
 };
 

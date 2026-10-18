@@ -14,7 +14,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useTranslation } from 'react-i18next';
-import { Check, Pencil, Plus } from 'lucide-react-native';
+import { Pencil, Plus } from 'lucide-react-native';
 
 import {
   AppBar,
@@ -23,6 +23,7 @@ import {
   BottomSheet,
   Card,
   CarAppBar,
+  CarPickerSheet,
   Field,
   IconButton,
   MonoText,
@@ -44,7 +45,7 @@ import {
 import { baselineForCar, calculateNextService, type LastChange } from '../domain/resource';
 import { effectiveMileage, validateMileageUpdate } from '../domain/validation';
 import type { Car, Part, ServiceItem, ServiceRecordWithItems } from '../domain/types';
-import { formatDate, formatNumber, parseNumberInput } from '../lib/format';
+import { formatDate, formatDecimal, formatNumber, parseNumberInput } from '../lib/format';
 import type { Language } from '../i18n';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -78,6 +79,18 @@ const carTitle = (car: Car): string => `${car.make} ${car.model}`;
 const itemNote = (item: ServiceItem): string | null => {
   const note = item.note?.trim();
   return note ? note : null;
+};
+
+/** Проверку видно сразу: замена и осмотр одной детали значат для ресурса разное. */
+const inspectionNote = (
+  item: ServiceItem,
+  language: Language,
+  t: ReturnType<typeof useTranslation>['t'],
+): string | null => {
+  if (item.action !== 'inspect') return null;
+  return item.measurement != null
+    ? t('records.inspectedMeasured', { mm: formatDecimal(item.measurement, language) })
+    : t('records.inspected');
 };
 
 /* ── Карточка одной записи ТО ───────────────────────────────────────────── */
@@ -131,7 +144,9 @@ function RecordCard({ record, partNames, language, onPress, onLongPress }: Recor
               {parts.map((item) => {
                 // Комментарий уходит второй строкой: у детали название легко занимает всю
                 // ширину, и приписка через разделитель ломала бы его переносом.
-                const note = itemNote(item);
+                const note = [inspectionNote(item, language, t), itemNote(item)]
+                  .filter(Boolean)
+                  .join(' · ');
                 return (
                   <View key={item.id} style={styles.partRow}>
                     <View style={[styles.dot, { backgroundColor: colors.textTertiary }]} />
@@ -446,9 +461,7 @@ export default function ServiceScreen() {
     <View style={[styles.screen, { backgroundColor: colors.bg, paddingTop: insets.top }]}>
       <CarAppBar
         carName={activeCar ? carTitle(activeCar) : t('tabs.service')}
-        onPressCar={() => {
-          if (cars.length > 1) setSheet('cars');
-        }}
+        onPressCar={() => setSheet('cars')}
         right={
           <IconButton
             icon={Plus}
@@ -528,31 +541,14 @@ export default function ServiceScreen() {
         </View>
       </BottomSheet>
 
-      {/* Выбор машины — только когда их больше одной. */}
-      <BottomSheet
+      <CarPickerSheet
         visible={sheet === 'cars'}
         onClose={() => setSheet('none')}
-        title={t('common.selectCar')}
-      >
-        <View style={[styles.carList, { paddingBottom: spacing.md }]}>
-          {cars.map((car) => (
-            <Pressable
-              key={car.id}
-              accessibilityRole="button"
-              onPress={() => {
-                setActiveCar(car.id);
-                setSheet('none');
-              }}
-              style={({ pressed }) => [styles.carOption, { opacity: pressed ? 0.7 : 1 }]}
-            >
-              <AppText variant="bodyMedium">{carTitle(car)}</AppText>
-              {car.id === activeCar?.id ? (
-                <Check size={sizes.iconMd} color={colors.accent} />
-              ) : null}
-            </Pressable>
-          ))}
-        </View>
-      </BottomSheet>
+        cars={cars}
+        activeCarId={activeCar?.id ?? null}
+        onSelect={setActiveCar}
+        onAddCar={() => navigation.navigate('CarForm')}
+      />
     </View>
   );
 }
@@ -717,14 +713,5 @@ const styles = StyleSheet.create({
   sheetBody: {
     gap: spacing.md,
     paddingHorizontal: layout.sheet.paddingHorizontal,
-  },
-  carList: {
-    paddingHorizontal: layout.sheet.paddingHorizontal,
-  },
-  carOption: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: spacing.md,
   },
 });

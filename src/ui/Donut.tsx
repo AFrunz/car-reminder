@@ -15,6 +15,7 @@ const NO_DATA_LABEL = '—';
 const STATUS_TONE: Record<ResourceStatus, TextTone> = {
   ok: 'ok',
   warn: 'warn',
+  inspect: 'inspect',
   overdue: 'danger',
   'no-data': 'tertiary',
 };
@@ -39,8 +40,20 @@ export function Donut({ size, value, status, label }: DonutProps) {
   const filled = value == null ? 0 : Math.max(0, Math.min(100, value)) / 100;
 
   const arcColor =
-    status === 'ok' ? colors.ok : status === 'warn' ? colors.warn : colors.danger;
-  const trackColor = status === 'overdue' ? colors.ringTrackDanger : colors.ringTrack;
+    status === 'ok'
+      ? colors.ok
+      : status === 'warn'
+        ? colors.warn
+        : status === 'inspect'
+          ? colors.inspect
+          : colors.danger;
+  // Подкрашенная дорожка видна, даже когда дуга нулевая: «пора» читается и по пустому кольцу.
+  const trackColor =
+    status === 'overdue'
+      ? colors.ringTrackDanger
+      : status === 'inspect'
+        ? colors.ringTrackInspect
+        : colors.ringTrack;
   const text = status === 'no-data' ? NO_DATA_LABEL : (label ?? String(value ?? ''));
 
   return (

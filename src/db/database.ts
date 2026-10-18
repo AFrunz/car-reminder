@@ -1,6 +1,8 @@
 import * as SQLite from 'expo-sqlite';
+import { getLocales } from 'expo-localization';
 import { CATALOG, CATALOG_BY_FREQUENCY, CATALOG_BY_KEY, hasInterval, isApplicable } from '../data/catalog';
 import type { FuelType, Transmission } from '../domain/types';
+import { localIsoDate } from '../lib/format';
 
 interface CarRowForSync {
   id: string;
@@ -92,6 +94,61 @@ const LEGACY_DEFAULTS: Record<string, [number | null, number | null]> = {
   starter: [150_000, null], 'low-beam-bulbs': [60_000, 36], 'wiper-blades': [20_000, 12],
   'rust-proofing': [null, 24], 'summer-tires': [50_000, 72], 'winter-tires': [50_000, 72],
 };
+
+/**
+ * Ревизия каталога с проверками: эти позиции раньше жили без единого интервала и
+ * потому лежали выключенными. Теперь у них есть срок — замены или осмотра, — и их
+ * пора показать. Включаем только там, где деталь подходит машине.
+ */
+const NEWLY_TRACKABLE = [
+  'throttle-cleaning',
+  'caliper-grease',
+  'cv-boots',
+  'brake-hoses',
+  'control-arm-bushings',
+  'ball-joints',
+  'tie-rod-ends',
+];
+
+/** Прежние интервалы замены тех позиций, которым ревизия с проверками их поменяла. */
+const REVISION_2_PREVIOUS: Record<string, [number | null, number | null]> = {
+  'throttle-cleaning': [null, null],
+  'caliper-grease': [null, null],
+  // Щётки перестали меняться по сроку — теперь их раз в год проверяют.
+  'wiper-blades': [null, 12],
+};
+
+/** Названия удалённой из каталога антикоррозийки — для тех, у кого по ней есть история. */
+const RUST_PROOFING_NAME = { ru: 'Антикоррозийная обработка', en: 'Rust proofing' };
+
+/**
+ * Склеивает задвоенные каталожные позиции машины. Задвоение получали все, кто обновлялся
+ * с релизов до ревизии каталога: догрузка каталога в ранних миграциях заводила деталь под
+ * новым ключом, а следом переименование старого ключа давало второй такой же. Оставляем
+ * позицию с историей, записи ТО с остальных переводим на неё.
+ */
+async function mergeDuplicateParts(db: SQLite.SQLiteDatabase): Promise<void> {
+  const groups = await db.getAllAsync<{ car_id: string; catalog_key: string }>(
+    `SELECT car_id, catalog_key FROM parts WHERE catalog_key IS NOT NULL
+     GROUP BY car_id, catalog_key HAVING COUNT(*) > 1`,
+  );
+  for (const group of groups) {
+    const rows = await db.getAllAsync<{ id: string; pinned: number }>(
+      `SELECT p.id AS id, p.pinned AS pinned,
+         (SELECT COUNT(*) FROM service_items i WHERE i.part_id = p.id) AS used
+       FROM parts p WHERE p.car_id = ? AND p.catalog_key = ?
+       ORDER BY used DESC, p.sort_order ASC`,
+      group.car_id,
+      group.catalog_key,
+    );
+    const [keeper, ...rest] = rows;
+    for (const row of rest) {
+      await db.runAsync('UPDATE service_items SET part_id = ? WHERE part_id = ?', keeper.id, row.id);
+      if (row.pinned === 1) await db.runAsync('UPDATE parts SET pinned = 1 WHERE id = ?', keeper.id);
+      await db.runAsync('DELETE FROM parts WHERE id = ?', row.id);
+    }
+  }
+}
 
 export const DATABASE_NAME = 'car-reminder.db';
 
@@ -248,6 +305,84 @@ const MIGRATIONS: Migration[] = [
       }
     }
   },
+
+  /**
+   * Проверки и замеры. У детали появился третий интервал — осмотра — и параметры износа
+   * для расчёта по замеру; у позиции записи ТО — действие (замена или проверка) и замер.
+   * Каталог пополнился регулярными работами, антикоррозийка из него ушла.
+   */
+  async (db) => {
+    await db.execAsync(`
+      ALTER TABLE parts ADD COLUMN inspect_km INTEGER;
+      ALTER TABLE parts ADD COLUMN inspect_months INTEGER;
+      ALTER TABLE parts ADD COLUMN wear_new REAL;
+      ALTER TABLE parts ADD COLUMN wear_min REAL;
+      ALTER TABLE service_items ADD COLUMN action TEXT NOT NULL DEFAULT 'replace';
+      ALTER TABLE service_items ADD COLUMN measurement REAL;
+    `);
+
+    await mergeDuplicateParts(db);
+
+    // Антикоррозийку без истории просто убираем; с историей — оставляем своей деталью,
+    // чтобы записи ТО не потеряли позицию, а название не зависело от перевода.
+    const language = await db.getFirstAsync<{ value: string }>(
+      "SELECT value FROM settings WHERE key = 'language'",
+    );
+    const lang = (language?.value ?? getLocales()[0]?.languageCode) === 'ru' ? 'ru' : 'en';
+    await db.runAsync(
+      `DELETE FROM parts WHERE catalog_key = 'rust-proofing'
+         AND id NOT IN (SELECT part_id FROM service_items WHERE part_id IS NOT NULL)`,
+    );
+    await db.runAsync(
+      `UPDATE parts SET catalog_key = NULL, custom = 1, name = COALESCE(name, ?)
+       WHERE catalog_key = 'rust-proofing'`,
+      RUST_PROOFING_NAME[lang],
+    );
+
+    const cars = await db.getAllAsync<CarRowForSync>('SELECT id, fuel, transmission FROM cars');
+    for (const car of cars) {
+      for (const [key, [oldKm, oldMonths]] of Object.entries(REVISION_2_PREVIOUS)) {
+        const entry = CATALOG_BY_KEY[key];
+        await db.runAsync(
+          `UPDATE parts SET interval_km = ?, interval_months = ?
+           WHERE car_id = ? AND catalog_key = ? AND interval_km IS ? AND interval_months IS ?`,
+          entry.intervalKm,
+          entry.intervalMonths,
+          car.id,
+          key,
+          oldKm,
+          oldMonths,
+        );
+      }
+
+      await syncCatalogForCar(db, car);
+
+      // Проверка и износ — новые колонки, своих значений у пользователя в них быть не может.
+      for (const entry of CATALOG) {
+        await db.runAsync(
+          `UPDATE parts SET inspect_km = ?, inspect_months = ?, wear_new = ?, wear_min = ?, scope = ?
+           WHERE car_id = ? AND catalog_key = ?`,
+          entry.inspectKm ?? null,
+          entry.inspectMonths ?? null,
+          entry.wearNew ?? null,
+          entry.wearMin ?? null,
+          entry.scope,
+          car.id,
+          entry.key,
+        );
+      }
+
+      for (const key of NEWLY_TRACKABLE) {
+        const entry = CATALOG_BY_KEY[key];
+        if (!isApplicable(entry, car.fuel as FuelType, car.transmission as Transmission)) continue;
+        await db.runAsync(
+          'UPDATE parts SET tracked = 1 WHERE car_id = ? AND catalog_key = ?',
+          car.id,
+          key,
+        );
+      }
+    }
+  },
 ];
 
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
@@ -264,12 +399,14 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
   let version = row?.user_version ?? 0;
   for (let i = version; i < MIGRATIONS.length; i += 1) {
     const migration = MIGRATIONS[i];
+    version = i + 1;
+    // Номер версии пишется в той же транзакции: иначе обрыв между ними прогнал бы шаг
+    // повторно, и `ALTER TABLE ADD COLUMN` навсегда упал бы на уже существующей колонке.
     await db.withTransactionAsync(async () => {
       if (typeof migration === 'string') await db.execAsync(migration);
       else await migration(db);
+      await db.execAsync(`PRAGMA user_version = ${version}`);
     });
-    version = i + 1;
-    await db.execAsync(`PRAGMA user_version = ${version}`);
   }
 }
 
@@ -295,6 +432,10 @@ export function createId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * Сегодня по местному времени. `toISOString()` дал бы дату по UTC, и в первые часы
+ * суток восточнее Гринвича сегодняшняя запись ТО считалась бы записью из будущего.
+ */
 export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return localIsoDate(new Date());
 }

@@ -48,6 +48,8 @@ export default function PartFormScreen() {
   const [categoryKey, setCategoryKey] = useState<CategoryKey>(CATEGORY_KEYS[0]);
   const [intervalKmText, setIntervalKmText] = useState('');
   const [intervalMonthsText, setIntervalMonthsText] = useState('');
+  const [inspectKmText, setInspectKmText] = useState('');
+  const [inspectMonthsText, setInspectMonthsText] = useState('');
 
   const [nameError, setNameError] = useState<string | null>(null);
   const [categorySheetOpen, setCategorySheetOpen] = useState(false);
@@ -70,6 +72,8 @@ export default function PartFormScreen() {
       setCategoryKey(part.categoryKey);
       setIntervalKmText(part.intervalKm == null ? '' : String(part.intervalKm));
       setIntervalMonthsText(part.intervalMonths == null ? '' : String(part.intervalMonths));
+      setInspectKmText(part.inspectKm == null ? '' : String(part.inspectKm));
+      setInspectMonthsText(part.inspectMonths == null ? '' : String(part.inspectMonths));
     })();
     return () => {
       cancelled = true;
@@ -80,6 +84,8 @@ export default function PartFormScreen() {
     const trimmed = name.trim();
     const intervalKm = parseNumberInput(intervalKmText);
     const intervalMonths = parseNumberInput(intervalMonthsText);
+    const inspectKm = parseNumberInput(inspectKmText);
+    const inspectMonths = parseNumberInput(inspectMonthsText);
 
     const missingName = trimmed.length === 0;
     setNameError(missingName ? t('partForm.nameRequired') : null);
@@ -89,9 +95,24 @@ export default function PartFormScreen() {
       if (partId === undefined) {
         // Деталь без интервалов сохраняется как обычно: `createCustomPart` сам заведёт её
         // выключенной, потому что ресурс у неё считать не из чего.
-        await createCustomPart({ carId, name: trimmed, categoryKey, intervalKm, intervalMonths });
+        await createCustomPart({
+          carId,
+          name: trimmed,
+          categoryKey,
+          intervalKm,
+          intervalMonths,
+          inspectKm,
+          inspectMonths,
+        });
       } else {
-        await updatePart(partId, { name: trimmed, categoryKey, intervalKm, intervalMonths });
+        await updatePart(partId, {
+          name: trimmed,
+          categoryKey,
+          intervalKm,
+          intervalMonths,
+          inspectKm,
+          inspectMonths,
+        });
       }
       refresh();
       navigation.goBack();
@@ -99,6 +120,8 @@ export default function PartFormScreen() {
   }, [
     carId,
     categoryKey,
+    inspectKmText,
+    inspectMonthsText,
     intervalKmText,
     intervalMonthsText,
     name,
@@ -189,6 +212,33 @@ export default function PartFormScreen() {
             {/* Интервал необязателен — предупреждаем всегда, а не только при пустых полях. */}
             <AppText variant="caption" tone="tertiary" style={styles.note}>
               {t('partForm.noIntervalHint')}
+            </AppText>
+          </View>
+
+          <View style={styles.intervalGroup}>
+            <AppText variant="sectionLabel">{t('partForm.inspectInterval')}</AppText>
+            <View style={styles.intervalRow}>
+              <Field
+                style={styles.flex}
+                label={t('partForm.byMileage')}
+                value={inspectKmText}
+                onChangeText={setInspectKmText}
+                suffix={t('units.km')}
+                keyboardType="number-pad"
+                mono
+              />
+              <Field
+                style={styles.flex}
+                label={t('partForm.byTime')}
+                value={inspectMonthsText}
+                onChangeText={setInspectMonthsText}
+                suffix={t('units.months')}
+                keyboardType="number-pad"
+                mono
+              />
+            </View>
+            <AppText variant="caption" tone="tertiary" style={styles.note}>
+              {t('partForm.inspectHint')}
             </AppText>
           </View>
 

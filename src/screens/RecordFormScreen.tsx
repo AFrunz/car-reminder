@@ -38,20 +38,43 @@ import { useColors } from '../theme/ThemeProvider';
 import { fonts, fontSize, layout, lineHeight, radius, sizes, spacing } from '../theme/tokens';
 import { useGarage } from '../state/GarageContext';
 import { currentLanguage } from '../i18n';
-import { formatNumber, formatShortDate, parseNumberInput } from '../lib/format';
+import {
+  formatDecimal,
+  formatNumber,
+  formatShortDate,
+  localIsoDate,
+  maskShortDate,
+  parseDecimalInput,
+  parseNumberInput,
+  parseShortDate,
+} from '../lib/format';
+import { describeResource } from '../lib/resourceText';
 import {
   CATEGORY_KEYS,
   type CategoryKey,
+  type ItemAction,
   type Part,
   type ServiceKind,
   type ServiceRecord,
 } from '../domain/types';
-import { validateServiceRecord, type ValidationError } from '../domain/validation';
+import {
+  effectiveMileage,
+  validateServiceRecord,
+  type ValidationError,
+} from '../domain/validation';
+import {
+  baselineForCar,
+  byUrgency,
+  resourceForPart,
+  summarizePartEvents,
+  type Resource,
+} from '../domain/resource';
 import {
   getRecord,
   knownServiceNames,
   listParts,
   listRecords,
+  partEventsForCar,
   saveRecord,
   todayIso,
   type NewServiceItem,
@@ -74,7 +97,30 @@ interface PartEntry {
   cost: number | null;
   /** Свободная пометка к позиции: модель, артикул, уточнение. Пусто — null. */
   note: string | null;
+  /** Деталь заменили или только проверили. */
+  action: ItemAction;
+  /** Замер остатка при проверке, мм. */
+  measurement: number | null;
 }
+
+/** Проверять есть смысл, когда у детали есть срок осмотра или её износ меряют. */
+const canInspect = (part: Part | undefined): boolean =>
+  part !== undefined &&
+  (part.inspectKm != null ||
+    part.inspectMonths != null ||
+    (part.wearNew != null && part.wearMin != null));
+
+const hasWearSpec = (part: Part | undefined): boolean =>
+  part !== undefined && part.wearNew != null && part.wearMin != null;
+
+/**
+ * Что делаем с деталью по умолчанию. Деталь, у которой срока замены нет, а есть только
+ * осмотр, в ТО почти всегда проверяют; всё остальное — меняют.
+ */
+const defaultAction = (part: Part): ItemAction =>
+  part.intervalKm == null && part.intervalMonths == null && canInspect(part)
+    ? 'inspect'
+    : 'replace';
 
 interface ServiceEntry {
   /** Локальный ключ строки — у услуги нет идентификатора до сохранения. */
@@ -94,18 +140,6 @@ const nextServiceKey = (): string => {
   serviceKeySeed += 1;
   return `service-${serviceKeySeed}`;
 };
-
-/* ── Дата ───────────────────────────────────────────────────────────────── */
-
-/**
- * Дата хранится в ISO, а выбирается системным календарём — разбирать текст не нужно.
- * Собираем строку по локальным полям даты: `toISOString()` увёл бы день в UTC.
- */
-function toIsoDate(date: Date): string {
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${date.getFullYear()}-${month}-${day}`;
-}
 
 /* ── Мелкие блоки, которых нет в src/ui ─────────────────────────────────── */
 
@@ -182,34 +216,66 @@ function SearchInput({ value, onChangeText, placeholder }: SearchInputProps) {
 interface DateFieldProps {
   label: string;
   value: string;
-  onPress: () => void;
+  onChangeText: (value: string) => void;
+  placeholder: string;
+  onOpenCalendar: () => void;
+  calendarLabel: string;
   style?: StyleProp<ViewStyle>;
 }
 
-/** Дата не набирается руками: поле только показывает значение и открывает календарь. */
-function DateField({ label, value, onPress, style }: DateFieldProps) {
+/**
+ * Дату можно набрать цифрами — маска сама расставит точки, — а можно выбрать в
+ * календаре по кнопке справа. Набирать быстрее, когда ТО вносится задним числом пачкой,
+ * календарь удобнее, когда дата недавняя.
+ */
+function DateField({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  onOpenCalendar,
+  calendarLabel,
+  style,
+}: DateFieldProps) {
   const colors = useColors();
   return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [styles.dateField, style, { opacity: pressed ? 0.7 : 1 }]}
-    >
+    <View style={[styles.dateField, style]}>
       <AppText variant="label" tone="secondary" style={styles.dateLabel}>
         {label}
       </AppText>
       <View
         style={[styles.dateBox, { backgroundColor: colors.surface, borderColor: colors.border }]}
       >
-        <MonoText size={fontSize.fieldValue}>{value}</MonoText>
-        <Calendar size={sizes.iconMd} color={colors.textTertiary} />
+        <TextInput
+          value={value}
+          onChangeText={(text) => onChangeText(maskShortDate(text))}
+          placeholder={placeholder}
+          placeholderTextColor={colors.textTertiary}
+          keyboardType="number-pad"
+          maxLength={DATE_LENGTH}
+          style={[styles.dateInput, { color: colors.textPrimary }]}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={calendarLabel}
+          hitSlop={10}
+          onPress={onOpenCalendar}
+          style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}
+        >
+          <Calendar size={sizes.iconMd} color={colors.accent} />
+        </Pressable>
       </View>
-    </Pressable>
+    </View>
   );
 }
 
+/** «дд.мм.гггг» — ровно десять знаков вместе с точками. */
+const DATE_LENGTH = 10;
+
 interface ItemRowProps {
   name: string;
+  /** Пометка «проверка» — видна сразу, чтобы осмотр не приняли за замену. */
+  tag?: string | null;
   category: string;
   /** Комментарий позиции; null — строку не показываем. */
   note: string | null;
@@ -226,6 +292,7 @@ interface ItemRowProps {
  */
 function ItemRow({
   name,
+  tag,
   category,
   note,
   price,
@@ -253,6 +320,11 @@ function ItemRow({
           </AppText>
         ) : null}
         <AppText tone="tertiary" style={styles.itemCategory}>
+          {tag ? (
+            <AppText tone="inspect" style={styles.itemCategory}>
+              {`${tag} · `}
+            </AppText>
+          ) : null}
           {category}
         </AppText>
       </View>
@@ -271,6 +343,30 @@ function ItemRow({
         </Pressable>
       </View>
     </Pressable>
+  );
+}
+
+/**
+ * Подпись детали в шторке выбора: категория и, если детали что-то нужно, — что именно.
+ * Объясняет, почему просроченное оказалось наверху списка.
+ */
+function PickSubtitle({ category, resource }: { category: string; resource?: Resource }) {
+  const { t } = useTranslation();
+  const language = currentLanguage();
+  const needs =
+    resource &&
+    (resource.status === 'overdue' || resource.status === 'inspect' || resource.status === 'warn')
+      ? describeResource(resource, language, t)
+      : null;
+  return (
+    <AppText tone="tertiary" style={styles.itemCategory}>
+      {category}
+      {needs ? (
+        <AppText tone={needs.tone} style={styles.itemCategory}>
+          {` · ${needs.text}`}
+        </AppText>
+      ) : null}
+    </AppText>
   );
 }
 
@@ -328,6 +424,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'RecordForm'>;
 
 export default function RecordFormScreen({ navigation, route }: Props) {
   const recordId = route.params?.recordId;
+  const inspectPartId = route.params?.inspectPartId;
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
@@ -340,10 +437,14 @@ export default function RecordFormScreen({ navigation, route }: Props) {
   const [trackedParts, setTrackedParts] = useState<Part[]>([]);
   const [existingRecords, setExistingRecords] = useState<ServiceRecord[]>([]);
   const [knownServices, setKnownServices] = useState<string[]>([]);
+  /** Ресурс каждой детали — по нему шторка ставит наверх то, что пора менять. */
+  const [resources, setResources] = useState<Map<string, Resource>>(new Map());
   const [loaded, setLoaded] = useState(false);
 
   /* Поля записи */
-  const [dateIso, setDateIso] = useState<string>(() => todayIso());
+  // Дата держится текстом: её можно набрать руками, и недонабранная — тоже состояние.
+  const [dateText, setDateText] = useState<string>(() => formatShortDate(todayIso(), language));
+  const [dateInvalid, setDateInvalid] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [mileageText, setMileageText] = useState('');
   const [kind, setKind] = useState<ServiceKind>('scheduled');
@@ -376,6 +477,8 @@ export default function RecordFormScreen({ navigation, route }: Props) {
   const [costTarget, setCostTarget] = useState<CostTarget | null>(null);
   const [costText, setCostText] = useState('');
   const [noteText, setNoteText] = useState('');
+  const [actionDraft, setActionDraft] = useState<ItemAction>('replace');
+  const [measurementText, setMeasurementText] = useState('');
 
   /** Поля заполняются из записи ровно один раз — иначе перезагрузка затрёт правки. */
   const initialised = useRef(false);
@@ -387,11 +490,12 @@ export default function RecordFormScreen({ navigation, route }: Props) {
       return;
     }
     void (async () => {
-      const [allParts, tracked, records, names] = await Promise.all([
+      const [allParts, tracked, records, names, events] = await Promise.all([
         listParts(carId),
         listParts(carId, true),
         listRecords(carId),
         knownServiceNames(carId),
+        partEventsForCar(carId),
       ]);
       const record = recordId ? await getRecord(recordId) : null;
       if (cancelled) return;
@@ -399,8 +503,39 @@ export default function RecordFormScreen({ navigation, route }: Props) {
       setTrackedParts(tracked);
       setExistingRecords(records);
       setKnownServices(names);
+      if (activeCar) {
+        const histories = summarizePartEvents(events);
+        const mileage = effectiveMileage(activeCar.mileage, records);
+        const today = todayIso();
+        const baseline = baselineForCar(activeCar);
+        setResources(
+          new Map(
+            tracked.map((part) => [
+              part.id,
+              resourceForPart(part, histories[part.id], mileage, today, baseline),
+            ]),
+          ),
+        );
+      }
+      if (!record && inspectPartId && !initialised.current) {
+        // Проверка из карточки детали: внеплановая запись с одной этой позицией.
+        const part = allParts.find((candidate) => candidate.id === inspectPartId);
+        if (part) {
+          setKind('unscheduled');
+          setPartEntries([
+            {
+              partId: part.id,
+              categoryKey: part.categoryKey,
+              cost: null,
+              note: null,
+              action: 'inspect',
+              measurement: null,
+            },
+          ]);
+        }
+      }
       if (record && !initialised.current) {
-        setDateIso(record.date);
+        setDateText(formatShortDate(record.date, language));
         setMileageText(formatNumber(record.mileage, language));
         setKind(record.kind);
         setTotalText(record.totalCost === null ? '' : formatNumber(record.totalCost, language));
@@ -413,6 +548,8 @@ export default function RecordFormScreen({ navigation, route }: Props) {
             categoryKey: item.categoryKey,
             cost: item.cost,
             note: item.note,
+            action: item.action,
+            measurement: item.measurement,
           });
         }
         setPartEntries(restoredParts);
@@ -434,7 +571,8 @@ export default function RecordFormScreen({ navigation, route }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [carId, language, recordId]);
+    // activeCar нужен ради пробега и года — пересчитывать ресурс при их смене правильно.
+  }, [activeCar, carId, inspectPartId, language, recordId]);
 
   const partsById = useMemo(() => {
     const map = new Map<string, Part>();
@@ -468,12 +606,24 @@ export default function RecordFormScreen({ navigation, route }: Props) {
   /** Задним числом запись завести можно, будущим — нет (SPEC.md). */
   const maxDate = useMemo(() => parseISO(todayIso()), []);
 
-  const onDateChange = useCallback((event: DateTimePickerEvent, selected?: Date) => {
-    // Android показывает календарь отдельным диалогом: после любого ответа он закрыт.
-    setDatePickerOpen(false);
-    if (event.type === 'dismissed' || !selected) return;
-    setDateIso(toIsoDate(selected));
+  /** null — дата набрана не полностью или такого дня нет. */
+  const dateIso = parseShortDate(dateText);
+
+  const onDateText = useCallback((value: string) => {
+    setDateText(value);
+    setDateInvalid(false);
   }, []);
+
+  const onDateChange = useCallback(
+    (event: DateTimePickerEvent, selected?: Date) => {
+      // Android показывает календарь отдельным диалогом: после любого ответа он закрыт.
+      setDatePickerOpen(false);
+      if (event.type === 'dismissed' || !selected) return;
+      setDateText(formatShortDate(localIsoDate(selected), language));
+      setDateInvalid(false);
+    },
+    [language],
+  );
 
   /* ── Позиции ──────────────────────────────────────────────────────────── */
 
@@ -525,6 +675,8 @@ export default function RecordFormScreen({ navigation, route }: Props) {
           categoryKey: part.categoryKey,
           cost: null,
           note: null,
+          action: defaultAction(part),
+          measurement: null,
         }));
       return [...kept, ...added];
     });
@@ -569,6 +721,11 @@ export default function RecordFormScreen({ navigation, route }: Props) {
       const cost = entry?.cost ?? null;
       setCostText(cost === null ? '' : formatNumber(cost, language));
       setNoteText(entry?.note ?? '');
+      const partEntry = target.type === 'part' ? partEntries[target.index] : undefined;
+      setActionDraft(partEntry?.action ?? 'replace');
+      setMeasurementText(
+        partEntry?.measurement == null ? '' : formatDecimal(partEntry.measurement, language),
+      );
       setCostTarget(target);
     },
     [language, partEntries, serviceEntries],
@@ -582,8 +739,13 @@ export default function RecordFormScreen({ navigation, route }: Props) {
     const note = trimmed.length === 0 ? null : trimmed;
     dropWarning();
     if (costTarget.type === 'part') {
+      // Замер принадлежит проверке: у замены толщина новой детали и так известна.
+      const action = actionDraft;
+      const measurement = action === 'inspect' ? parseDecimalInput(measurementText) : null;
       setPartEntries((current) =>
-        current.map((entry, i) => (i === costTarget.index ? { ...entry, cost, note } : entry)),
+        current.map((entry, i) =>
+          i === costTarget.index ? { ...entry, cost, note, action, measurement } : entry,
+        ),
       );
     } else {
       setServiceEntries((current) =>
@@ -591,7 +753,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
       );
     }
     setCostTarget(null);
-  }, [costTarget, costText, dropWarning, noteText]);
+  }, [actionDraft, costTarget, costText, dropWarning, measurementText, noteText]);
 
   /* ── Вычисление суммы ─────────────────────────────────────────────────── */
 
@@ -645,13 +807,15 @@ export default function RecordFormScreen({ navigation, route }: Props) {
   const save = useCallback(() => {
     if (!carId || !loaded) return;
     const mileage = parseNumberInput(mileageText);
+    setDateInvalid(dateIso === null);
     const found = validateServiceRecord(
-      { id: recordId, date: dateIso, mileage: mileage ?? Number.NaN },
+      // Недонабранная дата отдельной ошибкой: проверять линейность пробега ей не с чем.
+      { id: recordId, date: dateIso ?? '0000-00-00', mileage: mileage ?? Number.NaN },
       existingRecords,
       todayIso(),
-    );
+    ).filter((error) => dateIso !== null || error.code === 'mileage-not-positive');
     setErrors(found);
-    if (found.length > 0 || mileage === null) return;
+    if (found.length > 0 || mileage === null || dateIso === null) return;
 
     const items: NewServiceItem[] = [
       ...partEntries.map<NewServiceItem>((entry) => ({
@@ -661,6 +825,8 @@ export default function RecordFormScreen({ navigation, route }: Props) {
         categoryKey: entry.categoryKey,
         cost: entry.cost,
         note: entry.note,
+        action: entry.action,
+        measurement: entry.action === 'inspect' ? entry.measurement : null,
       })),
       ...serviceEntries.map<NewServiceItem>((entry) => ({
         type: 'service',
@@ -669,6 +835,8 @@ export default function RecordFormScreen({ navigation, route }: Props) {
         categoryKey: entry.categoryKey,
         cost: entry.cost,
         note: entry.note,
+        action: 'replace',
+        measurement: null,
       })),
     ];
 
@@ -709,11 +877,37 @@ export default function RecordFormScreen({ navigation, route }: Props) {
 
   /* ── Производные значения для разметки ────────────────────────────────── */
 
+  const costTargetPart =
+    costTarget?.type === 'part'
+      ? partsById.get(partEntries[costTarget.index]?.partId ?? '')
+      : undefined;
+
+  const actionOptions = useMemo<SegmentOption<ItemAction>[]>(
+    () => [
+      { value: 'replace', label: t('recordForm.actionReplace') },
+      { value: 'inspect', label: t('recordForm.actionInspect') },
+    ],
+    [t],
+  );
+
+  /**
+   * Наверху шторки — то, что пора менять или проверять: в ТО чаще всего добавляют именно
+   * это, и листать полсотни позиций ради просроченного масла незачем. Деталь, у которой
+   * ресурс не посчитан, остаётся в каталожном порядке в самом конце.
+   */
   const filteredParts = useMemo(() => {
     const query = partsQuery.trim().toLowerCase();
-    if (query.length === 0) return trackedParts;
-    return trackedParts.filter((part) => partTitle(part).toLowerCase().includes(query));
-  }, [partTitle, partsQuery, trackedParts]);
+    const visible =
+      query.length === 0
+        ? trackedParts
+        : trackedParts.filter((part) => partTitle(part).toLowerCase().includes(query));
+    return [...visible].sort((a, b) => {
+      const ra = resources.get(a.id);
+      const rb = resources.get(b.id);
+      if (!ra || !rb) return (ra ? 0 : 1) - (rb ? 0 : 1);
+      return byUrgency(ra, rb);
+    });
+  }, [partTitle, partsQuery, resources, trackedParts]);
 
   const suggestions = useMemo(() => {
     const common = COMMON_SERVICES.map((key) => ({ key, label: t(`service.${key}`) }));
@@ -750,8 +944,11 @@ export default function RecordFormScreen({ navigation, route }: Props) {
         <View style={styles.fieldsRow}>
           <DateField
             label={t('recordForm.date')}
-            value={formatShortDate(dateIso, language)}
-            onPress={() => setDatePickerOpen(true)}
+            value={dateText}
+            onChangeText={onDateText}
+            placeholder={t('recordForm.datePlaceholder')}
+            onOpenCalendar={() => setDatePickerOpen(true)}
+            calendarLabel={t('recordForm.openCalendar')}
             style={styles.flexField}
           />
           <Field
@@ -769,6 +966,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
           />
         </View>
 
+        {dateInvalid ? <Banner tone="warning" text={t('validation.date-invalid')} /> : null}
         {errorMessages.map((message, index) => (
           <Banner key={`${index}-${message}`} tone="warning" text={message} />
         ))}
@@ -789,6 +987,15 @@ export default function RecordFormScreen({ navigation, route }: Props) {
             <ItemRow
               key={`${entry.partId}-${index}`}
               name={partTitleById(entry.partId)}
+              tag={
+                entry.action === 'inspect'
+                  ? entry.measurement != null
+                    ? t('records.inspectedMeasured', {
+                        mm: formatDecimal(entry.measurement, language),
+                      })
+                    : t('records.inspected')
+                  : null
+              }
               category={t(`category.${entry.categoryKey}`)}
               note={entry.note}
               price={entry.cost === null ? t('common.dash') : formatNumber(entry.cost, language)}
@@ -883,7 +1090,7 @@ export default function RecordFormScreen({ navigation, route }: Props) {
       {/* Системный календарь: на Android это отдельный диалог, живёт только пока открыт */}
       {datePickerOpen ? (
         <DateTimePicker
-          value={parseISO(dateIso)}
+          value={parseISO(dateIso ?? todayIso())}
           mode="date"
           display="calendar"
           maximumDate={maxDate}
@@ -937,9 +1144,10 @@ export default function RecordFormScreen({ navigation, route }: Props) {
               <Checkbox checked={partsDraft.includes(part.id)} />
               <View style={styles.pickText}>
                 <AppText variant="bodyMedium">{partTitle(part)}</AppText>
-                <AppText tone="tertiary" style={styles.itemCategory}>
-                  {t(`category.${part.categoryKey}`)}
-                </AppText>
+                <PickSubtitle
+                  category={t(`category.${part.categoryKey}`)}
+                  resource={resources.get(part.id)}
+                />
               </View>
             </Pressable>
           ))}
@@ -1044,10 +1252,40 @@ export default function RecordFormScreen({ navigation, route }: Props) {
       <BottomSheet
         visible={costTarget !== null}
         onClose={() => setCostTarget(null)}
-        title={t('recordForm.editItemCost')}
+        title={
+          costTarget?.type === 'part'
+            ? partTitleById(partEntries[costTarget.index]?.partId ?? '')
+            : t('recordForm.editItemCost')
+        }
         footer={<PrimaryButton fullWidth title={t('common.done')} onPress={applyCost} />}
       >
         <View style={[styles.sheetPadded, styles.sheetFields]}>
+          {costTargetPart && canInspect(costTargetPart) ? (
+            <SegmentedControl
+              options={actionOptions}
+              value={actionDraft}
+              onChange={setActionDraft}
+            />
+          ) : null}
+          {costTargetPart && hasWearSpec(costTargetPart) && actionDraft === 'inspect' ? (
+            <View style={styles.hintGroup}>
+              <Field
+                label={t('recordForm.measurement')}
+                value={measurementText}
+                onChangeText={setMeasurementText}
+                keyboardType="decimal-pad"
+                suffix={t('units.mm')}
+                placeholder={t('common.dash')}
+                mono
+              />
+              <AppText variant="label" tone="tertiary" style={styles.hint}>
+                {t('recordForm.measurementHint', {
+                  from: formatDecimal(costTargetPart.wearNew as number, language),
+                  to: formatDecimal(costTargetPart.wearMin as number, language),
+                })}
+              </AppText>
+            </View>
+          ) : null}
           <View style={styles.hintGroup}>
             <Field
               label={t('recordForm.itemCost')}
@@ -1115,9 +1353,16 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: sizes.border,
     flexDirection: 'row',
+    gap: spacing.sm,
     height: sizes.fieldHeight,
     justifyContent: 'space-between',
     paddingHorizontal: layout.field.paddingHorizontal,
+  },
+  dateInput: {
+    flex: 1,
+    fontFamily: fonts.mono,
+    fontSize: fontSize.fieldValue,
+    padding: 0,
   },
   section: {
     gap: spacing.sm,
